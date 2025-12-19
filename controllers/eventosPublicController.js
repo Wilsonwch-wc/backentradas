@@ -1,0 +1,161 @@
+import pool from '../config/db.js';
+
+const columnasEventoPublicQuery = `
+  SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+  WHERE TABLE_SCHEMA = DATABASE() 
+    AND TABLE_NAME = 'eventos' 
+    AND COLUMN_NAME IN ('forma_espacio', 'escenario_x', 'escenario_y', 'escenario_width', 'escenario_height', 'qr_pago_url')
+`;
+
+// Obtener todos los eventos (público - sin autenticación)
+export const obtenerEventosPublicos = async (req, res) => {
+  try {
+    const [columnas] = await pool.execute(columnasEventoPublicQuery);
+    const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
+    const tieneQrPago = columnasExistentes.includes('qr_pago_url');
+
+    let query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, created_at, updated_at`;
+    if (tieneQrPago) {
+      query += `, qr_pago_url`;
+    }
+    query += ` FROM eventos ORDER BY hora_inicio DESC`;
+
+    const [eventos] = await pool.execute(query);
+
+    // Para eventos especiales, obtener el precio más bajo de los tipos de precio
+    const eventosConPrecio = await Promise.all(eventos.map(async (evento) => {
+      if (evento.tipo_evento === 'especial') {
+        // Obtener todos los tipos de precio del evento y encontrar el más bajo
+        const [tiposPrecio] = await pool.execute(
+          `SELECT precio FROM tipos_precio_evento WHERE evento_id = ? ORDER BY precio ASC LIMIT 1`,
+          [evento.id]
+        );
+        if (tiposPrecio.length > 0) {
+          evento.precio = tiposPrecio[0].precio;
+        }
+      }
+      return evento;
+    }));
+
+    res.json({
+      success: true,
+      data: eventosConPrecio
+    });
+  } catch (error) {
+    console.error('Error al obtener eventos públicos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener los eventos',
+      error: error.message
+    });
+  }
+};
+
+// Obtener un evento por ID (público)
+export const obtenerEventoPublicoPorId = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verificar qué columnas existen para el layout/qr
+    const [columnas] = await pool.execute(columnasEventoPublicQuery);
+    
+    const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
+    const tieneFormaEspacio = columnasExistentes.includes('forma_espacio');
+    const tieneQrPago = columnasExistentes.includes('qr_pago_url');
+    
+    let query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, created_at, updated_at`;
+    
+    if (tieneFormaEspacio) {
+      query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height`;
+    }
+    if (tieneQrPago) {
+      query += `, qr_pago_url`;
+    }
+    
+    query += ` FROM eventos WHERE id = ?`;
+
+    const [eventos] = await pool.execute(query, [id]);
+
+    if (eventos.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Evento no encontrado'
+      });
+    }
+
+    const evento = eventos[0];
+
+    // Si es un evento especial, obtener todos los tipos de precio, mesas y asientos
+    if (evento.tipo_evento === 'especial') {
+      const [tiposPrecio] = await pool.execute(
+        `SELECT id, nombre, precio, descripcion, color
+         FROM tipos_precio_evento
+         WHERE evento_id = ? AND activo = 1
+         ORDER BY precio DESC`,
+        [id]
+      );
+      evento.tipos_precio = tiposPrecio;
+      // También establecer el precio más bajo como precio principal
+      if (tiposPrecio.length > 0) {
+        const precioMinimo = tiposPrecio.reduce((min, tp) => tp.precio < min ? tp.precio : min, tiposPrecio[0].precio);
+        evento.precio = precioMinimo;
+      }
+
+      // Obtener mesas con sus posiciones y dimensiones
+      const [mesas] = await pool.execute(
+        `SELECT id, numero_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto
+         FROM mesas
+         WHERE evento_id = ? AND activo = 1
+         ORDER BY numero_mesa ASC`,
+        [id]
+      );
+      evento.mesas = mesas;
+
+      // Obtener asientos con sus posiciones, estado y área
+      const [asientos] = await pool.execute(
+        `SELECT a.id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, a.estado, 
+                a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre
+         FROM asientos a
+         LEFT JOIN areas_layout ar ON a.area_id = ar.id
+         WHERE a.evento_id = ?
+         ORDER BY a.mesa_id ASC, a.numero_asiento ASC`,
+        [id]
+      );
+      evento.asientos = asientos;
+
+      // Obtener áreas del layout
+      try {
+        const [areas] = await pool.execute(
+          `SELECT id, nombre, posicion_x, posicion_y, ancho, alto, color
+           FROM areas_layout
+           WHERE evento_id = ?
+           ORDER BY nombre ASC`,
+          [id]
+        );
+        evento.areas = areas;
+      } catch (error) {
+        // Si la tabla no existe, simplemente no incluir áreas
+        console.warn('No se pudieron cargar las áreas:', error);
+        evento.areas = [];
+      }
+    } else {
+      evento.tipos_precio = [];
+      evento.mesas = [];
+      evento.asientos = [];
+      evento.areas = [];
+    }
+
+    res.json({
+      success: true,
+      data: evento
+    });
+  } catch (error) {
+    console.error('Error al obtener evento público:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener el evento',
+      error: error.message
+    });
+  }
+};
+
