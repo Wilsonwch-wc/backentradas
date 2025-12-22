@@ -519,34 +519,70 @@ export const buscarEntradaPorCodigo = async (req, res) => {
           [codigo]
         );
 
-        if (mesas.length === 0) {
-          await connection.rollback();
-          connection.release();
-          return res.status(404).json({
-            success: false,
-            message: 'Código de escaneo no encontrado o entrada no confirmada'
-          });
+        if (mesas.length > 0) {
+          const mesa = mesas[0];
+          compra = {
+            id: mesa.compra_id,
+            codigo_unico: mesa.codigo_unico,
+            cliente_nombre: mesa.cliente_nombre,
+            evento: mesa.evento_titulo
+          };
+
+          // Solo mostrar información, NO tickear automáticamente
+          yaEscaneada = mesa.escaneado ? true : false;
+          entradaEscaneada = {
+            tipo: 'MESA',
+            numero_mesa: mesa.numero_mesa,
+            cantidad_sillas: mesa.cantidad_sillas,
+            codigo_escaneo: codigo,
+            fecha_escaneo: mesa.fecha_escaneo,
+            ya_escaneado: yaEscaneada,
+            compra_mesa_id: mesa.id // Necesario para tickear después
+          };
+        } else {
+          // Buscar en compras_entradas_generales (eventos generales)
+          const [entradasGenerales] = await connection.execute(
+            `SELECT 
+              eg.*,
+              c.id as compra_id,
+              c.codigo_unico,
+              c.cliente_nombre,
+              c.evento_id,
+              e.titulo as evento_titulo
+             FROM compras_entradas_generales eg
+             INNER JOIN compras c ON eg.compra_id = c.id
+             INNER JOIN eventos e ON c.evento_id = e.id
+             WHERE eg.codigo_escaneo = ?`,
+            [codigo]
+          );
+
+          if (entradasGenerales.length === 0) {
+            await connection.rollback();
+            connection.release();
+            return res.status(404).json({
+              success: false,
+              message: 'Código de escaneo no encontrado o entrada no confirmada'
+            });
+          }
+
+          const entradaGeneral = entradasGenerales[0];
+          compra = {
+            id: entradaGeneral.compra_id,
+            codigo_unico: entradaGeneral.codigo_unico,
+            cliente_nombre: entradaGeneral.cliente_nombre,
+            evento: entradaGeneral.evento_titulo
+          };
+
+          // Solo mostrar información, NO tickear automáticamente
+          yaEscaneada = entradaGeneral.escaneado ? true : false;
+          entradaEscaneada = {
+            tipo: 'GENERAL',
+            codigo_escaneo: codigo,
+            fecha_escaneo: entradaGeneral.fecha_escaneo,
+            ya_escaneado: yaEscaneada,
+            compra_entrada_general_id: entradaGeneral.id // Necesario para tickear después
+          };
         }
-
-        const mesa = mesas[0];
-        compra = {
-          id: mesa.compra_id,
-          codigo_unico: mesa.codigo_unico,
-          cliente_nombre: mesa.cliente_nombre,
-          evento: mesa.evento_titulo
-        };
-
-        // Solo mostrar información, NO tickear automáticamente
-        yaEscaneada = mesa.escaneado ? true : false;
-        entradaEscaneada = {
-          tipo: 'MESA',
-          numero_mesa: mesa.numero_mesa,
-          cantidad_sillas: mesa.cantidad_sillas,
-          codigo_escaneo: codigo,
-          fecha_escaneo: mesa.fecha_escaneo,
-          ya_escaneado: yaEscaneada,
-          compra_mesa_id: mesa.id // Necesario para tickear después
-        };
       }
 
       await connection.commit();
@@ -584,7 +620,7 @@ export const buscarEntradaPorCodigo = async (req, res) => {
 // Tickear entrada (marcar como escaneada)
 export const tickearEntrada = async (req, res) => {
   try {
-    const { codigoEscaneo, tipo, compra_asiento_id, compra_mesa_id } = req.body;
+    const { codigoEscaneo, tipo, compra_asiento_id, compra_mesa_id, compra_entrada_general_id } = req.body;
     const usuarioId = req.user?.id || null;
 
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -746,7 +782,7 @@ export const tickearEntrada = async (req, res) => {
 // Desmarcar escaneo de entrada
 export const desmarcarEscaneo = async (req, res) => {
   try {
-    const { codigoEscaneo, tipo, compra_asiento_id, compra_mesa_id } = req.body;
+    const { codigoEscaneo, tipo, compra_asiento_id, compra_mesa_id, compra_entrada_general_id } = req.body;
     const usuarioId = req.user?.id || null;
 
     if (!codigoEscaneo || !/^\d{5}$/.test(codigoEscaneo.trim())) {
@@ -778,6 +814,15 @@ export const desmarcarEscaneo = async (req, res) => {
                usuario_escaneo_id = NULL
            WHERE id = ? AND codigo_escaneo = ?`,
           [compra_mesa_id, codigo]
+        );
+      } else if (tipo === 'GENERAL' && compra_entrada_general_id) {
+        await connection.execute(
+          `UPDATE compras_entradas_generales 
+           SET escaneado = FALSE, 
+               fecha_escaneo = NULL, 
+               usuario_escaneo_id = NULL
+           WHERE id = ? AND codigo_escaneo = ?`,
+          [compra_entrada_general_id, codigo]
         );
       } else {
         await connection.rollback();
@@ -869,65 +914,111 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
       WHERE cm.escaneado = TRUE AND cm.estado = 'CONFIRMADO'
     `;
 
+    let queryEntradasGenerales = `
+      SELECT 
+        eg.id,
+        eg.codigo_escaneo,
+        eg.fecha_escaneo,
+        eg.usuario_escaneo_id,
+        c.id as compra_id,
+        c.codigo_unico,
+        c.cliente_nombre,
+        c.evento_id,
+        e.titulo as evento_titulo,
+        u.nombre_completo as usuario_escaneo
+      FROM compras_entradas_generales eg
+      INNER JOIN compras c ON eg.compra_id = c.id
+      INNER JOIN eventos e ON c.evento_id = e.id
+      LEFT JOIN usuarios u ON eg.usuario_escaneo_id = u.id
+      WHERE eg.escaneado = TRUE
+    `;
+
     const params = [];
     if (evento_id) {
       queryAsientos += ' AND c.evento_id = ?';
       queryMesas += ' AND c.evento_id = ?';
+      queryEntradasGenerales += ' AND c.evento_id = ?';
       params.push(evento_id);
     }
 
     queryAsientos += ' ORDER BY ca.fecha_escaneo DESC';
     queryMesas += ' ORDER BY cm.fecha_escaneo DESC';
+    queryEntradasGenerales += ' ORDER BY eg.fecha_escaneo DESC';
 
     const [asientos] = await pool.execute(queryAsientos, params);
     const [mesas] = await pool.execute(queryMesas, params);
+    const [entradasGenerales] = await pool.execute(queryEntradasGenerales, params);
 
-    // Obtener tipo de evento si hay filtro
+    // Obtener información del evento si hay filtro
     let tipoEvento = null;
+    let eventoInfo = null;
     if (evento_id) {
-      const [tiposEvento] = await pool.execute('SELECT tipo_evento FROM eventos WHERE id = ?', [evento_id]);
-      tipoEvento = tiposEvento.length > 0 ? tiposEvento[0].tipo_evento : null;
+      const [eventos] = await pool.execute('SELECT tipo_evento, limite_entradas, capacidad_maxima FROM eventos WHERE id = ?', [evento_id]);
+      if (eventos.length > 0) {
+        eventoInfo = eventos[0];
+        tipoEvento = eventoInfo.tipo_evento;
+      }
       
-      // Si es evento general, contar desde compras directamente
+      // Si es evento general, obtener estadísticas de entradas generales
       if (tipoEvento === 'general') {
-        // Para eventos generales, contar desde la tabla compras
+        // Obtener límite del evento
+        const limiteTotal = eventoInfo?.limite_entradas ? parseInt(eventoInfo.limite_entradas) : null;
+        
+        // Contar todas las entradas generales confirmadas (desde compras_entradas_generales)
         const [statsGenerales] = await pool.execute(
-          `SELECT SUM(cantidad) as total_confirmadas
-           FROM compras c
-           WHERE c.estado = 'PAGO_REALIZADO' AND c.evento_id = ?`,
+          `SELECT 
+             COUNT(*) as total_confirmadas,
+             SUM(CASE WHEN escaneado = TRUE THEN 1 ELSE 0 END) as total_escaneadas
+           FROM compras_entradas_generales eg
+           INNER JOIN compras c ON eg.compra_id = c.id
+           WHERE c.evento_id = ? AND c.estado = 'PAGO_REALIZADO'`,
           [evento_id]
         );
         
         const totalConfirmadasGenerales = parseInt(statsGenerales[0]?.total_confirmadas || 0);
+        const totalEscaneadasGenerales = parseInt(statsGenerales[0]?.total_escaneadas || 0);
+        const totalDisponiblesGenerales = limiteTotal ? Math.max(0, limiteTotal - totalConfirmadasGenerales) : null;
         
-        // Para eventos generales no hay escaneo individual, solo compras confirmadas
         res.json({
           success: true,
           data: {
             asientos: [],
             mesas: [],
+            generales: entradasGenerales.map(eg => ({
+              ...eg,
+              tipo: 'GENERAL',
+              compra_entrada_general_id: eg.id
+            })),
             estadisticas: {
               total_confirmadas: totalConfirmadasGenerales,
-              total_escaneadas: 0,
-              total_faltantes: totalConfirmadasGenerales,
+              total_escaneadas: totalEscaneadasGenerales,
+              total_faltantes: totalConfirmadasGenerales - totalEscaneadasGenerales,
               tipo_evento: 'general',
               generales: {
-                total_confirmadas: totalConfirmadasGenerales,
-                total_escaneadas: 0,
-                total_faltantes: totalConfirmadasGenerales
+                limite_total: limiteTotal,
+                vendidas: totalConfirmadasGenerales,
+                disponibles: totalDisponiblesGenerales,
+                escaneadas: totalEscaneadasGenerales,
+                total_faltantes: totalConfirmadasGenerales - totalEscaneadasGenerales
               },
               asientos: {
-                total_confirmadas: 0,
-                total_escaneadas: 0,
+                limite_total: null,
+                vendidas: 0,
+                disponibles: null,
+                escaneadas: 0,
                 total_faltantes: 0
               },
               mesas: {
-                total_confirmadas: 0,
-                total_escaneadas: 0,
+                limite_total: null,
+                vendidas: 0,
+                disponibles: null,
+                escaneadas: 0,
                 total_faltantes: 0,
                 sillas: {
-                  total_confirmadas: 0,
-                  total_escaneadas: 0,
+                  limite_total: null,
+                  vendidas: 0,
+                  disponibles: null,
+                  escaneadas: 0,
                   total_faltantes: 0
                 }
               }
@@ -939,6 +1030,38 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
     }
 
     // Para eventos especiales (con asientos/mesas)
+    // Obtener información de capacidad del evento si hay filtro
+    let totalAsientosDisponibles = null;
+    let totalMesasDisponibles = null;
+    let totalSillasDisponibles = null;
+    
+    if (evento_id) {
+      // Contar total de asientos en el evento
+      const [totalAsientos] = await pool.execute(
+        'SELECT COUNT(*) as total FROM asientos WHERE evento_id = ?',
+        [evento_id]
+      );
+      const totalAsientosEnEvento = parseInt(totalAsientos[0]?.total || 0);
+      
+      // Contar total de mesas en el evento
+      const [totalMesas] = await pool.execute(
+        'SELECT COUNT(*) as total FROM mesas WHERE evento_id = ? AND activo = 1',
+        [evento_id]
+      );
+      const totalMesasEnEvento = parseInt(totalMesas[0]?.total || 0);
+      
+      // Calcular total de sillas (suma de capacidad_sillas de todas las mesas)
+      const [totalSillas] = await pool.execute(
+        'SELECT SUM(capacidad_sillas) as total FROM mesas WHERE evento_id = ? AND activo = 1',
+        [evento_id]
+      );
+      const totalSillasEnEvento = parseInt(totalSillas[0]?.total || 0);
+      
+      totalAsientosDisponibles = totalAsientosEnEvento;
+      totalMesasDisponibles = totalMesasEnEvento;
+      totalSillasDisponibles = totalSillasEnEvento;
+    }
+    
     let queryStatsAsientos = `
       SELECT 
         COUNT(*) as total_confirmadas,
@@ -973,6 +1096,10 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
     const totalEscaneadasAsientos = parseInt(statsAsientos[0]?.total_escaneadas || 0);
     const totalConfirmadasMesas = parseInt(statsMesas[0]?.total_confirmadas || 0);
     const totalEscaneadasMesas = parseInt(statsMesas[0]?.total_escaneadas || 0);
+    
+    // Calcular disponibles
+    const asientosDisponibles = totalAsientosDisponibles !== null ? Math.max(0, totalAsientosDisponibles - totalConfirmadasAsientos) : null;
+    const mesasDisponibles = totalMesasDisponibles !== null ? Math.max(0, totalMesasDisponibles - totalConfirmadasMesas) : null;
 
     // Para mesas, cada mesa tiene cantidad_sillas, así que necesitamos contar las sillas
     let querySillasMesas = `
@@ -992,17 +1119,40 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
     const [statsSillasMesas] = await pool.execute(querySillasMesas, statsParams);
     const totalSillasConfirmadas = parseInt(statsSillasMesas[0]?.total_sillas_confirmadas || 0);
     const totalSillasEscaneadas = parseInt(statsSillasMesas[0]?.total_sillas_escaneadas || 0);
+    
+    // Calcular sillas disponibles
+    const sillasDisponibles = totalSillasDisponibles !== null ? Math.max(0, totalSillasDisponibles - totalSillasConfirmadas) : null;
 
     // Si no hay filtro de evento, también contar eventos generales
     let totalConfirmadasGenerales = 0;
+    let totalEscaneadasGenerales = 0;
+    let limiteTotalGenerales = null;
     if (!evento_id) {
-      // Contar todas las compras de eventos generales confirmadas
+      // Contar todas las entradas generales confirmadas y escaneadas
       const [statsGenerales] = await pool.execute(`
-        SELECT SUM(c.cantidad) as total_confirmadas
-        FROM compras c
+        SELECT 
+          COUNT(*) as total_confirmadas,
+          SUM(CASE WHEN eg.escaneado = TRUE THEN 1 ELSE 0 END) as total_escaneadas
+        FROM compras_entradas_generales eg
+        INNER JOIN compras c ON eg.compra_id = c.id
         INNER JOIN eventos e ON c.evento_id = e.id
         WHERE c.estado = 'PAGO_REALIZADO' AND e.tipo_evento = 'general'
       `);
+      totalConfirmadasGenerales = parseInt(statsGenerales[0]?.total_confirmadas || 0);
+      totalEscaneadasGenerales = parseInt(statsGenerales[0]?.total_escaneadas || 0);
+      // Para vista general sin filtro, no calculamos límite total
+      limiteTotalGenerales = null;
+    } else {
+      // Si hay filtro de evento pero no es general, las entradas generales ya están en entradasGenerales
+      // Contar las entradas generales escaneadas para este evento
+      totalEscaneadasGenerales = entradasGenerales.length;
+      const [statsGenerales] = await pool.execute(
+        `SELECT COUNT(*) as total_confirmadas
+         FROM compras_entradas_generales eg
+         INNER JOIN compras c ON eg.compra_id = c.id
+         WHERE c.evento_id = ? AND c.estado = 'PAGO_REALIZADO'`,
+        [evento_id]
+      );
       totalConfirmadasGenerales = parseInt(statsGenerales[0]?.total_confirmadas || 0);
     }
 
@@ -1027,28 +1177,41 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
           tipo: 'MESA',
           compra_mesa_id: m.id
         })),
+        generales: entradasGenerales.map(eg => ({
+          ...eg,
+          tipo: 'GENERAL',
+          compra_entrada_general_id: eg.id
+        })),
         estadisticas: {
           total_confirmadas: totalConfirmadas,
           total_escaneadas: totalEscaneadas,
           total_faltantes: totalFaltantes,
           tipo_evento: tipoEvento || (evento_id ? null : 'mixto'),
           generales: {
-            total_confirmadas: totalConfirmadasGenerales,
-            total_escaneadas: 0,
-            total_faltantes: totalConfirmadasGenerales
+            limite_total: limiteTotalGenerales,
+            vendidas: totalConfirmadasGenerales,
+            disponibles: limiteTotalGenerales !== null ? Math.max(0, limiteTotalGenerales - totalConfirmadasGenerales) : null,
+            escaneadas: totalEscaneadasGenerales,
+            total_faltantes: totalConfirmadasGenerales - totalEscaneadasGenerales
           },
           asientos: {
-            total_confirmadas: totalConfirmadasAsientos,
-            total_escaneadas: totalEscaneadasAsientos,
+            limite_total: totalAsientosDisponibles,
+            vendidas: totalConfirmadasAsientos,
+            disponibles: asientosDisponibles,
+            escaneadas: totalEscaneadasAsientos,
             total_faltantes: totalConfirmadasAsientos - totalEscaneadasAsientos
           },
           mesas: {
-            total_confirmadas: totalConfirmadasMesas,
-            total_escaneadas: totalEscaneadasMesas,
+            limite_total: totalMesasDisponibles,
+            vendidas: totalConfirmadasMesas,
+            disponibles: mesasDisponibles,
+            escaneadas: totalEscaneadasMesas,
             total_faltantes: totalConfirmadasMesas - totalEscaneadasMesas,
             sillas: {
-              total_confirmadas: totalSillasConfirmadas,
-              total_escaneadas: totalSillasEscaneadas,
+              limite_total: totalSillasDisponibles,
+              vendidas: totalSillasConfirmadas,
+              disponibles: sillasDisponibles,
+              escaneadas: totalSillasEscaneadas,
               total_faltantes: totalSillasConfirmadas - totalSillasEscaneadas
             }
           }
@@ -1222,7 +1385,13 @@ const generarCodigoEscaneo = async (connection) => {
       [codigo]
     );
     
-    existe = asientos.length > 0 || mesas.length > 0;
+    // Verificar si existe en compras_entradas_generales (para eventos generales)
+    const [entradasGenerales] = await connection.execute(
+      'SELECT id FROM compras_entradas_generales WHERE codigo_escaneo = ?',
+      [codigo]
+    );
+    
+    existe = asientos.length > 0 || mesas.length > 0 || entradasGenerales.length > 0;
     intentos++;
   }
 
@@ -1306,6 +1475,20 @@ export const confirmarPago = async (req, res) => {
         );
       }
 
+      // Si es evento general (no hay asientos ni mesas), generar un código de escaneo por cada entrada
+      if (asientosCompra.length === 0 && mesasCompra.length === 0) {
+        const cantidad = compra.cantidad || 1;
+        // Generar un código único para cada entrada
+        for (let i = 0; i < cantidad; i++) {
+          const codigoEscaneo = await generarCodigoEscaneo(connection);
+          await connection.execute(
+            `INSERT INTO compras_entradas_generales (compra_id, codigo_escaneo)
+             VALUES (?, ?)`,
+            [id, codigoEscaneo]
+          );
+        }
+      }
+
       await connection.commit();
       connection.release();
 
@@ -1323,6 +1506,7 @@ export const confirmarPago = async (req, res) => {
       // Obtener asientos y mesas para el boleto
       let asientosBoleto = [];
       let mesasBoleto = [];
+      let entradasGeneralesBoleto = [];
       
       try {
         const [asientos] = await pool.execute(
@@ -1362,6 +1546,27 @@ export const confirmarPago = async (req, res) => {
         console.error('Error al obtener mesas para boleto:', err);
       }
 
+      // Obtener entradas generales si no hay asientos ni mesas
+      if (asientosBoleto.length === 0 && mesasBoleto.length === 0) {
+        try {
+          const [entradas] = await pool.execute(`
+            SELECT 
+              id,
+              compra_id,
+              codigo_escaneo,
+              escaneado,
+              fecha_escaneo,
+              usuario_escaneo_id
+            FROM compras_entradas_generales
+            WHERE compra_id = ?
+            ORDER BY id ASC
+          `, [id]);
+          entradasGeneralesBoleto = entradas;
+        } catch (err) {
+          console.error('Error al obtener entradas generales para boleto:', err);
+        }
+      }
+
       // Generar PDF del boleto
       let pdfPath = null;
       let pdfUrl = null;
@@ -1378,7 +1583,8 @@ export const confirmarPago = async (req, res) => {
             descripcion: compraActualizada.evento_descripcion
           },
           asientosBoleto,
-          mesasBoleto
+          mesasBoleto,
+          entradasGeneralesBoleto
         );
 
         pdfUrl = `${serverBase}${pdfPath}`;
@@ -1616,13 +1822,14 @@ export const obtenerPDFBoleto = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Obtener la compra con todos sus detalles
+    // Obtener la compra con todos sus detalles (incluyendo codigo_escaneo para eventos generales)
     const [compras] = await pool.execute(`
       SELECT 
         c.*,
         e.titulo as evento_titulo,
         e.hora_inicio as evento_fecha,
-        e.descripcion as evento_descripcion
+        e.descripcion as evento_descripcion,
+        e.tipo_evento
       FROM compras c
       INNER JOIN eventos e ON c.evento_id = e.id
       WHERE c.id = ?
@@ -1664,7 +1871,7 @@ export const obtenerPDFBoleto = async (req, res) => {
     `, [id]);
 
     // Obtener mesas completas
-      const [mesas] = await pool.execute(`
+    const [mesas] = await pool.execute(`
       SELECT 
         cm.*,
         m.numero_mesa,
@@ -1673,6 +1880,24 @@ export const obtenerPDFBoleto = async (req, res) => {
       INNER JOIN mesas m ON cm.mesa_id = m.id
       WHERE cm.compra_id = ? AND cm.estado = 'CONFIRMADO'
     `, [id]);
+
+    // Obtener entradas generales (para eventos sin asientos/mesas)
+    let entradasGenerales = [];
+    if (asientos.length === 0 && mesas.length === 0) {
+      const [entradas] = await pool.execute(`
+        SELECT 
+          id,
+          compra_id,
+          codigo_escaneo,
+          escaneado,
+          fecha_escaneo,
+          usuario_escaneo_id
+        FROM compras_entradas_generales
+        WHERE compra_id = ?
+        ORDER BY id ASC
+      `, [id]);
+      entradasGenerales = entradas;
+    }
 
     // Obtener información del evento
     const evento = {
@@ -1683,7 +1908,7 @@ export const obtenerPDFBoleto = async (req, res) => {
     };
 
     // Generar el PDF del boleto
-    const pdfPath = await generarBoletoPDF(compra, evento, asientos, mesas);
+    const pdfPath = await generarBoletoPDF(compra, evento, asientos, mesas, entradasGenerales);
     
     // Obtener ruta completa del archivo
     const pdfPathCompleto = path.join(__dirname, '..', pdfPath.replace(/^\//, ''));
@@ -1728,13 +1953,14 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
       });
     }
 
-    // Obtener la compra con todos sus detalles
+    // Obtener la compra con todos sus detalles (incluyendo codigo_escaneo para eventos generales)
     const [compras] = await pool.execute(`
       SELECT 
         c.*,
         e.titulo as evento_titulo,
         e.hora_inicio as evento_fecha,
-        e.descripcion as evento_descripcion
+        e.descripcion as evento_descripcion,
+        e.tipo_evento
       FROM compras c
       INNER JOIN eventos e ON c.evento_id = e.id
       WHERE c.id = ?
@@ -1962,13 +2188,14 @@ export const enviarBoletoPorEmail = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Obtener la compra con todos sus detalles
+    // Obtener la compra con todos sus detalles (incluyendo codigo_escaneo para eventos generales)
     const [compras] = await pool.execute(`
       SELECT 
         c.*,
         e.titulo as evento_titulo,
         e.hora_inicio as evento_fecha,
-        e.descripcion as evento_descripcion
+        e.descripcion as evento_descripcion,
+        e.tipo_evento
       FROM compras c
       INNER JOIN eventos e ON c.evento_id = e.id
       WHERE c.id = ?
@@ -2028,6 +2255,24 @@ export const enviarBoletoPorEmail = async (req, res) => {
       WHERE cm.compra_id = ? AND cm.estado = 'CONFIRMADO'
     `, [id]);
 
+    // Obtener entradas generales (para eventos sin asientos/mesas)
+    let entradasGenerales = [];
+    if (asientos.length === 0 && mesas.length === 0) {
+      const [entradas] = await pool.execute(`
+        SELECT 
+          id,
+          compra_id,
+          codigo_escaneo,
+          escaneado,
+          fecha_escaneo,
+          usuario_escaneo_id
+        FROM compras_entradas_generales
+        WHERE compra_id = ?
+        ORDER BY id ASC
+      `, [id]);
+      entradasGenerales = entradas;
+    }
+
     // Obtener información del evento
     const evento = {
       id: compra.evento_id,
@@ -2037,7 +2282,7 @@ export const enviarBoletoPorEmail = async (req, res) => {
     };
 
     // Generar el PDF del boleto
-    const pdfPath = await generarBoletoPDF(compra, evento, asientos, mesas);
+    const pdfPath = await generarBoletoPDF(compra, evento, asientos, mesas, entradasGenerales);
     
     // Obtener ruta completa del archivo
     const pdfPathCompleto = path.join(__dirname, '..', pdfPath.replace(/^\//, ''));

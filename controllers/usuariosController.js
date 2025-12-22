@@ -292,3 +292,60 @@ export const obtenerRoles = async (req, res) => {
   }
 };
 
+// Borrar todos los datos de la base de datos excepto usuarios y roles
+export const borrarTodosLosDatos = async (req, res) => {
+  const connection = await pool.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+
+    // Desactivar temporalmente las verificaciones de foreign keys
+    await connection.execute('SET FOREIGN_KEY_CHECKS = 0');
+
+    // Eliminar datos en orden para evitar problemas con foreign keys
+    // Empezar con las tablas dependientes (hijas)
+    
+    // Tablas de escaneo y entradas
+    await connection.execute('DELETE FROM escaneos_entradas');
+    await connection.execute('DELETE FROM entradas');
+    
+    // Tablas de compras relacionadas
+    await connection.execute('DELETE FROM compras_asientos');
+    await connection.execute('DELETE FROM compras_mesas');
+    await connection.execute('DELETE FROM compras');
+    await connection.execute('DELETE FROM pagos');
+    
+    // Tablas de layout y asientos/mesas
+    await connection.execute('DELETE FROM asientos');
+    await connection.execute('DELETE FROM mesas');
+    await connection.execute('DELETE FROM areas_layout');
+    await connection.execute('DELETE FROM tipos_precio_evento');
+    
+    // Tablas principales
+    await connection.execute('DELETE FROM eventos');
+    await connection.execute('DELETE FROM clientes');
+    await connection.execute('DELETE FROM contacto_info');
+
+    // Reactivar las verificaciones de foreign keys
+    await connection.execute('SET FOREIGN_KEY_CHECKS = 1');
+
+    await connection.commit();
+    connection.release();
+
+    res.json({
+      success: true,
+      message: 'Todos los datos han sido eliminados exitosamente (excepto usuarios y roles)'
+    });
+  } catch (error) {
+    await connection.rollback();
+    connection.release();
+    
+    console.error('Error al borrar todos los datos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al borrar los datos',
+      error: error.message
+    });
+  }
+};
+

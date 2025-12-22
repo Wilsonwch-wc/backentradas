@@ -7,16 +7,15 @@ dotenv.config();
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '', // Sin contraseña por defecto
   database: process.env.DB_NAME || 'entradas_db',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
 };
 
-// Si DB_PASSWORD está vacío o no definido, no incluir el campo password
-if (!process.env.DB_PASSWORD || process.env.DB_PASSWORD.trim() === '') {
-  delete dbConfig.password;
+// Solo incluir password si está definido y no está vacío
+if (process.env.DB_PASSWORD !== undefined && process.env.DB_PASSWORD.trim() !== '') {
+  dbConfig.password = process.env.DB_PASSWORD;
 }
 
 const pool = mysql.createPool(dbConfig);

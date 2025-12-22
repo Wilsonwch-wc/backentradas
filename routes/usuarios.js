@@ -6,7 +6,8 @@ import {
   crearUsuario,
   actualizarUsuario,
   eliminarUsuario,
-  obtenerRoles
+  obtenerRoles,
+  borrarTodosLosDatos
 } from '../controllers/usuariosController.js';
 
 const router = express.Router();
@@ -32,6 +33,9 @@ router.put('/:id', actualizarUsuario);
 
 // Eliminar un usuario
 router.delete('/:id', eliminarUsuario);
+
+// Borrar todos los datos (excepto usuarios y roles)
+router.delete('/datos/todos', borrarTodosLosDatos);
 
 export default router;
 
