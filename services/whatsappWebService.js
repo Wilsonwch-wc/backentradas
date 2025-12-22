@@ -23,14 +23,37 @@ export const inicializarWhatsAppWeb = () => {
     return client;
   }
 
+  // Detectar la ruta de Chromium/Chrome instalado en el sistema
+  const possibleChromePaths = [
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable'
+  ];
+  
+  let executablePath = null;
+  for (const chromePath of possibleChromePaths) {
+    if (fs.existsSync(chromePath)) {
+      executablePath = chromePath;
+      break;
+    }
+  }
+
+  const puppeteerConfig = {
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  };
+
+  // Si encontramos Chromium en el sistema, usarlo
+  if (executablePath) {
+    puppeteerConfig.executablePath = executablePath;
+  }
+
   client = new Client({
     authStrategy: new LocalAuth({
       dataPath: path.join(__dirname, '../.wwebjs_auth')
     }),
-    puppeteer: {
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    }
+    puppeteer: puppeteerConfig
   });
 
   client.on('qr', async (qr) => {
