@@ -39,12 +39,14 @@ export const inicializarWhatsAppWeb = () => {
       // Resolver symlinks para obtener la ruta real
       try {
         const realPath = fs.realpathSync(chromePath);
+        console.log(`🔍 Chromium encontrado en: ${chromePath} -> ${realPath}`);
         if (fs.existsSync(realPath)) {
           executablePath = realPath;
           break;
         }
       } catch (e) {
         // Si no se puede resolver, usar la ruta original
+        console.log(`🔍 Chromium encontrado en: ${chromePath} (no se pudo resolver symlink)`);
         executablePath = chromePath;
         break;
       }
@@ -57,10 +59,21 @@ export const inicializarWhatsAppWeb = () => {
     const chromeExecutable = path.join(scriptDir, 'chromium');
     const chromeBrowserExecutable = path.join(scriptDir, 'chromium-browser');
     if (fs.existsSync(chromeExecutable)) {
+      console.log(`✅ Usando ejecutable Chromium: ${chromeExecutable}`);
       executablePath = chromeExecutable;
     } else if (fs.existsSync(chromeBrowserExecutable)) {
+      console.log(`✅ Usando ejecutable Chromium: ${chromeBrowserExecutable}`);
       executablePath = chromeBrowserExecutable;
+    } else {
+      // Si no encontramos el ejecutable, usar el script directamente
+      console.log(`⚠️ Usando script wrapper: ${executablePath}`);
     }
+  }
+  
+  if (!executablePath) {
+    console.log('⚠️ Chromium no encontrado en rutas comunes. WhatsApp Web usará Chromium de Puppeteer (si está disponible).');
+  } else {
+    console.log(`✅ Chromium configurado: ${executablePath}`);
   }
 
   const puppeteerConfig = {
