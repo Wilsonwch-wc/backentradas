@@ -24,13 +24,12 @@ export const inicializarWhatsAppWeb = () => {
   }
 
   // Detectar la ruta de Chromium/Chrome instalado en el sistema
-  // En AlmaLinux/RHEL, el wrapper script funciona mejor que el binario directo
+  // Puppeteer necesita el ejecutable binario, no el script wrapper
   const possibleChromePaths = [
-    '/usr/bin/chromium-browser',                     // Symlink al script wrapper (mejor opción para RHEL/AlmaLinux)
-    '/usr/lib64/chromium-browser/chromium-browser.sh', // Script wrapper directo
-    '/usr/lib64/chromium-browser/chromium-browser',  // Binario ejecutable
+    '/usr/lib64/chromium-browser/chromium-browser',  // Binario ejecutable real (prioridad en AlmaLinux/RHEL)
     '/usr/lib64/chromium-browser/chromium',          // Alternativa
     '/usr/bin/chromium',                              // Ejecutable directo
+    '/usr/bin/chromium-browser',                     // Symlink (resolver después)
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable'
   ];
@@ -40,26 +39,36 @@ export const inicializarWhatsAppWeb = () => {
     if (fs.existsSync(chromePath)) {
       try {
         const stats = fs.statSync(chromePath);
-        if (stats.isFile()) {
-          // Resolver symlinks
+        if (stats.isFile() && !stats.isSymbolicLink()) {
+          // Si no es un symlink, usar directamente (probablemente es el binario)
+          executablePath = chromePath;
+          console.log(`🔍 Chromium encontrado (binario): ${executablePath}`);
+          break;
+        } else {
+          // Resolver symlinks para obtener el binario real
           try {
             const realPath = fs.realpathSync(chromePath);
             console.log(`🔍 Chromium encontrado: ${chromePath} -> ${realPath}`);
             
-            // En AlmaLinux/RHEL, el script .sh funciona mejor que el binario directo
+            // Si el symlink apunta a un script .sh, buscar el binario en el mismo directorio
             if (realPath.endsWith('.sh')) {
-              executablePath = realPath;
-              console.log(`✅ Usando script wrapper: ${executablePath}`);
-              break;
+              const scriptDir = path.dirname(realPath);
+              const chromeBinary = path.join(scriptDir, 'chromium-browser');
+              if (fs.existsSync(chromeBinary)) {
+                const binStats = fs.statSync(chromeBinary);
+                if (binStats.isFile() && !binStats.isSymbolicLink()) {
+                  executablePath = chromeBinary;
+                  console.log(`✅ Usando binario Chromium: ${executablePath}`);
+                  break;
+                }
+              }
             } else if (fs.existsSync(realPath) && fs.statSync(realPath).isFile()) {
               executablePath = realPath;
               break;
             }
           } catch (e) {
-            // Si no se puede resolver, usar la ruta original
-            console.log(`🔍 Chromium encontrado: ${chromePath}`);
-            executablePath = chromePath;
-            break;
+            // Si no se puede resolver, continuar buscando
+            continue;
           }
         }
       } catch (e) {
@@ -70,7 +79,7 @@ export const inicializarWhatsAppWeb = () => {
   }
   
   if (!executablePath) {
-    console.log('⚠️ Chromium no encontrado en rutas comunes. WhatsApp Web usará Chromium de Puppeteer (si está disponible).');
+    console.log('⚠️ Chromium no encontrado en rutas comunes. WhatsApp Web no estará disponible.');
   } else {
     console.log(`✅ Chromium configurado: ${executablePath}`);
   }
