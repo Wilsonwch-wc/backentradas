@@ -24,12 +24,13 @@ export const inicializarWhatsAppWeb = () => {
   }
 
   // Detectar la ruta de Chromium/Chrome instalado en el sistema
-  // Orden importante: primero buscar el ejecutable real, luego los symlinks/scripts
+  // En AlmaLinux/RHEL, el wrapper script funciona mejor que el binario directo
   const possibleChromePaths = [
-    '/usr/lib64/chromium-browser/chromium-browser',  // Ejecutable real en AlmaLinux/RHEL
+    '/usr/bin/chromium-browser',                     // Symlink al script wrapper (mejor opción para RHEL/AlmaLinux)
+    '/usr/lib64/chromium-browser/chromium-browser.sh', // Script wrapper directo
+    '/usr/lib64/chromium-browser/chromium-browser',  // Binario ejecutable
     '/usr/lib64/chromium-browser/chromium',          // Alternativa
     '/usr/bin/chromium',                              // Ejecutable directo
-    '/usr/bin/chromium-browser',                     // Symlink (resolver después)
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable'
   ];
@@ -37,44 +38,33 @@ export const inicializarWhatsAppWeb = () => {
   let executablePath = null;
   for (const chromePath of possibleChromePaths) {
     if (fs.existsSync(chromePath)) {
-      // Si es un script .sh, buscar el ejecutable real en el mismo directorio
-      if (chromePath.endsWith('.sh')) {
-        const scriptDir = path.dirname(chromePath);
-        const chromeExecutable = path.join(scriptDir, 'chromium-browser');
-        const chromeAltExecutable = path.join(scriptDir, 'chromium');
-        if (fs.existsSync(chromeExecutable) && !fs.statSync(chromeExecutable).isDirectory()) {
-          console.log(`🔍 Chromium encontrado (resuelto desde script): ${chromeExecutable}`);
-          executablePath = chromeExecutable;
-          break;
-        } else if (fs.existsSync(chromeAltExecutable) && !fs.statSync(chromeAltExecutable).isDirectory()) {
-          console.log(`🔍 Chromium encontrado (resuelto desde script): ${chromeAltExecutable}`);
-          executablePath = chromeAltExecutable;
-          break;
-        }
-      } else {
-        // Verificar que sea un archivo ejecutable, no un directorio
-        try {
-          const stats = fs.statSync(chromePath);
-          if (stats.isFile()) {
-            // Resolver symlinks si es necesario
-            try {
-              const realPath = fs.realpathSync(chromePath);
-              console.log(`🔍 Chromium encontrado: ${chromePath} -> ${realPath}`);
-              if (fs.existsSync(realPath) && fs.statSync(realPath).isFile()) {
-                executablePath = realPath;
-                break;
-              }
-            } catch (e) {
-              // Si no se puede resolver, usar la ruta original
-              console.log(`🔍 Chromium encontrado: ${chromePath} (no se pudo resolver symlink)`);
-              executablePath = chromePath;
+      try {
+        const stats = fs.statSync(chromePath);
+        if (stats.isFile()) {
+          // Resolver symlinks
+          try {
+            const realPath = fs.realpathSync(chromePath);
+            console.log(`🔍 Chromium encontrado: ${chromePath} -> ${realPath}`);
+            
+            // En AlmaLinux/RHEL, el script .sh funciona mejor que el binario directo
+            if (realPath.endsWith('.sh')) {
+              executablePath = realPath;
+              console.log(`✅ Usando script wrapper: ${executablePath}`);
+              break;
+            } else if (fs.existsSync(realPath) && fs.statSync(realPath).isFile()) {
+              executablePath = realPath;
               break;
             }
+          } catch (e) {
+            // Si no se puede resolver, usar la ruta original
+            console.log(`🔍 Chromium encontrado: ${chromePath}`);
+            executablePath = chromePath;
+            break;
           }
-        } catch (e) {
-          // Continuar buscando en la siguiente ruta
-          continue;
         }
+      } catch (e) {
+        // Continuar buscando en la siguiente ruta
+        continue;
       }
     }
   }
