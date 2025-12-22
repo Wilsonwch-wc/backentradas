@@ -145,12 +145,21 @@ export const inicializarWhatsAppWeb = () => {
 
   // Inicializar el cliente
   client.initialize().catch(err => {
-    // Solo mostrar error si no es por falta de conexión a internet
-    if (!err.message.includes('ERR_INTERNET_DISCONNECTED') && 
-        !err.message.includes('net::ERR_INTERNET_DISCONNECTED')) {
-      console.error('❌ Error al inicializar WhatsApp Web:', err.message);
+    // Manejar diferentes tipos de errores de inicialización
+    const errorMsg = err.message || err.toString();
+    
+    if (errorMsg.includes('ERR_INTERNET_DISCONNECTED') || 
+        errorMsg.includes('net::ERR_INTERNET_DISCONNECTED')) {
+      console.warn('⚠️ WhatsApp Web: Sin conexión a internet (se puede ignorar)');
+    } else if (errorMsg.includes('Could not find expected browser') || 
+               errorMsg.includes('chromium') || 
+               errorMsg.includes('chrome')) {
+      // Error de Chromium - WhatsApp Web no estará disponible, pero no es crítico
+      console.warn('⚠️ WhatsApp Web: Chromium no disponible. El envío automático por WhatsApp no funcionará.');
+      console.warn('   (El resto de la aplicación funciona normalmente. Para habilitar WhatsApp Web, instala puppeteer completo: npm install puppeteer)');
     } else {
-      console.warn('⚠️ WhatsApp Web no puede inicializarse: Sin conexión a internet (puedes ignorar esto)');
+      // Otros errores
+      console.error('❌ Error al inicializar WhatsApp Web:', err.message);
     }
   });
 
