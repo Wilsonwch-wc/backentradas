@@ -34,8 +34,9 @@ export const inicializarWhatsAppWeb = () => {
   });
 
   client.on('qr', async (qr) => {
-    console.log('📱 Escanea este código QR con WhatsApp:');
-    qrcode.generate(qr, { small: true });
+    // QR code no se muestra en consola - solo se guarda para usar en el navegador
+    // console.log('📱 Escanea este código QR con WhatsApp:');
+    // qrcode.generate(qr, { small: true });
     qrCodeData = qr;
     
     // Generar QR como imagen base64 para mostrar en el navegador
@@ -76,7 +77,13 @@ export const inicializarWhatsAppWeb = () => {
 
   // Inicializar el cliente
   client.initialize().catch(err => {
-    console.error('❌ Error al inicializar WhatsApp Web:', err);
+    // Solo mostrar error si no es por falta de conexión a internet
+    if (!err.message.includes('ERR_INTERNET_DISCONNECTED') && 
+        !err.message.includes('net::ERR_INTERNET_DISCONNECTED')) {
+      console.error('❌ Error al inicializar WhatsApp Web:', err.message);
+    } else {
+      console.warn('⚠️ WhatsApp Web no puede inicializarse: Sin conexión a internet (puedes ignorar esto)');
+    }
   });
 
   return client;

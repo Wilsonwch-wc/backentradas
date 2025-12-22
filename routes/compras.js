@@ -10,6 +10,7 @@ import {
   reenviarBoleto,
   obtenerPDFBoleto,
   enviarPDFPorWhatsAppWeb,
+  enviarBoletoPorEmail,
   obtenerEstadoWhatsAppWeb,
   reiniciarSesionWhatsAppWeb,
   eliminarCompra,
@@ -71,6 +72,9 @@ router.get('/:id/pdf', verifyToken, obtenerPDFBoleto);
 
 // Enviar PDF por WhatsApp Web (requiere autenticación - solo admin)
 router.post('/:id/enviar-whatsapp-web', verifyToken, enviarPDFPorWhatsAppWeb);
+
+// Enviar boleto por correo electrónico (requiere autenticación - solo admin)
+router.post('/:id/enviar-email', verifyToken, enviarBoletoPorEmail);
 
 // Obtener estado de WhatsApp Web (requiere autenticación - solo admin)
 router.get('/whatsapp-web/estado', verifyToken, obtenerEstadoWhatsAppWeb);

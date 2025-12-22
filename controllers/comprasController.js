@@ -1,7 +1,9 @@
 import pool from '../config/db.js';
 import { generarBoletoPDF } from '../services/boletoService.js';
 import { enviarPDFPorWhatsAppWeb as enviarPDFWhatsAppWebService, obtenerEstadoWhatsApp, reiniciarWhatsAppWeb } from '../services/whatsappWebService.js';
+import { enviarBoletoPorEmail as enviarBoletoPorEmailService } from '../services/emailService.js';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1683,22 +1685,22 @@ export const obtenerPDFBoleto = async (req, res) => {
     // Generar el PDF del boleto
     const pdfPath = await generarBoletoPDF(compra, evento, asientos, mesas);
     
-    // Construir URL completa del PDF
-    const protocol = req.protocol || 'http';
-    const host = req.get('host') || 'localhost:5000';
-    const serverBase = `${protocol}://${host}`;
-    const pdfUrl = `${serverBase}${pdfPath.replace(/\\/g, '/').replace(/^.*\/uploads/, '/uploads')}`;
-
-    // Obtener ruta completa del archivo para WhatsApp Web
+    // Obtener ruta completa del archivo
     const pdfPathCompleto = path.join(__dirname, '..', pdfPath.replace(/^\//, ''));
+    
+    // Verificar si el archivo existe
+    if (!fs.existsSync(pdfPathCompleto)) {
+      return res.status(404).json({
+        success: false,
+        message: 'El archivo PDF no se encontró'
+      });
+    }
 
-    res.json({
-      success: true,
-      pdfUrl: pdfUrl,
-      pdfPath: pdfPathCompleto,
-      telefono: compra.cliente_telefono,
-      nombreCliente: compra.cliente_nombre
-    });
+    // Enviar el archivo PDF directamente
+    const nombreArchivo = `boleto-${compra.codigo_unico}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${nombreArchivo}"`);
+    res.sendFile(pdfPathCompleto);
 
   } catch (error) {
     console.error('Error al obtener PDF del boleto:', error);
@@ -1950,6 +1952,132 @@ export const eliminarCompra = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al eliminar la compra',
+      error: error.message
+    });
+  }
+};
+
+// Enviar boleto por correo electrónico
+export const enviarBoletoPorEmail = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Obtener la compra con todos sus detalles
+    const [compras] = await pool.execute(`
+      SELECT 
+        c.*,
+        e.titulo as evento_titulo,
+        e.hora_inicio as evento_fecha,
+        e.descripcion as evento_descripcion
+      FROM compras c
+      INNER JOIN eventos e ON c.evento_id = e.id
+      WHERE c.id = ?
+    `, [id]);
+
+    if (compras.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Compra no encontrada'
+      });
+    }
+
+    const compra = compras[0];
+
+    // Verificar que el pago esté confirmado
+    if (compra.estado !== 'PAGO_REALIZADO') {
+      return res.status(400).json({
+        success: false,
+        message: 'Solo se pueden enviar boletos de compras con pago confirmado'
+      });
+    }
+
+    // Verificar que haya email del cliente
+    if (!compra.cliente_email) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se encontró correo electrónico del cliente'
+      });
+    }
+
+    // Obtener asientos individuales
+    const [asientos] = await pool.execute(`
+      SELECT 
+        ca.*,
+        a.numero_asiento,
+        a.area_id,
+        a.mesa_id,
+        m.numero_mesa,
+        tp.nombre as tipo_precio_nombre,
+        ar.nombre as area_nombre
+      FROM compras_asientos ca
+      INNER JOIN asientos a ON ca.asiento_id = a.id
+      LEFT JOIN mesas m ON a.mesa_id = m.id
+      LEFT JOIN tipos_precio_evento tp ON a.tipo_precio_id = tp.id
+      LEFT JOIN areas_layout ar ON a.area_id = ar.id
+      WHERE ca.compra_id = ? AND ca.estado = 'CONFIRMADO'
+    `, [id]);
+
+    // Obtener mesas completas
+    const [mesas] = await pool.execute(`
+      SELECT 
+        cm.*,
+        m.numero_mesa,
+        cm.codigo_escaneo
+      FROM compras_mesas cm
+      INNER JOIN mesas m ON cm.mesa_id = m.id
+      WHERE cm.compra_id = ? AND cm.estado = 'CONFIRMADO'
+    `, [id]);
+
+    // Obtener información del evento
+    const evento = {
+      id: compra.evento_id,
+      titulo: compra.evento_titulo,
+      hora_inicio: compra.evento_fecha,
+      descripcion: compra.evento_descripcion
+    };
+
+    // Generar el PDF del boleto
+    const pdfPath = await generarBoletoPDF(compra, evento, asientos, mesas);
+    
+    // Obtener ruta completa del archivo
+    const pdfPathCompleto = path.join(__dirname, '..', pdfPath.replace(/^\//, ''));
+
+    // Preparar datos para el email
+    const datosCompra = {
+      tituloEvento: compra.evento_titulo,
+      fechaEvento: compra.evento_fecha,
+      cantidad: compra.cantidad,
+      total: compra.total,
+      codigoUnico: compra.codigo_unico
+    };
+
+    // Enviar el boleto por email
+    const resultado = await enviarBoletoPorEmailService(
+      compra.cliente_email,
+      compra.cliente_nombre,
+      pdfPathCompleto,
+      datosCompra
+    );
+
+    if (resultado.success) {
+      res.json({
+        success: true,
+        message: resultado.message,
+        email: resultado.email
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: resultado.message,
+        error: resultado.error
+      });
+    }
+
+  } catch (error) {
+    console.error('Error al enviar boleto por email:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al enviar el boleto por correo electrónico',
       error: error.message
     });
   }

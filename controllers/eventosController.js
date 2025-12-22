@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { generarSlug } from '../utils/slug.js';
 
 const columnasEventoQuery = `
   SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
@@ -367,6 +368,7 @@ export const actualizarEvento = async (req, res) => {
 
     const tieneFormaEspacio = columnasExistentes.includes('forma_espacio');
     const tieneLayoutBloqueado = columnasExistentes.includes('layout_bloqueado');
+    
     let querySelect = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, created_at, updated_at`;
     if (tieneFormaEspacio) {
       querySelect += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height`;

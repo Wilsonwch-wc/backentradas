@@ -1,4 +1,5 @@
 import pool from '../config/db.js';
+import { generarSlug } from '../utils/slug.js';
 
 const columnasEventoPublicQuery = `
   SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
@@ -23,6 +24,7 @@ export const obtenerEventosPublicos = async (req, res) => {
     const [eventos] = await pool.execute(query);
 
     // Para eventos especiales, obtener el precio más bajo de los tipos de precio
+    // También generar slug desde el título
     const eventosConPrecio = await Promise.all(eventos.map(async (evento) => {
       if (evento.tipo_evento === 'especial') {
         // Obtener todos los tipos de precio del evento y encontrar el más bajo
@@ -34,6 +36,8 @@ export const obtenerEventosPublicos = async (req, res) => {
           evento.precio = tiposPrecio[0].precio;
         }
       }
+      // Generar slug desde el título
+      evento.slug = generarSlug(evento.titulo);
       return evento;
     }));
 
@@ -51,10 +55,10 @@ export const obtenerEventosPublicos = async (req, res) => {
   }
 };
 
-// Obtener un evento por ID (público)
+// Obtener un evento por slug (generado del título) o ID (público)
 export const obtenerEventoPublicoPorId = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params; // Puede ser slug o ID numérico
 
     // Verificar qué columnas existen para el layout/qr
     const [columnas] = await pool.execute(columnasEventoPublicQuery);
@@ -72,9 +76,45 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
       query += `, qr_pago_url`;
     }
     
-    query += ` FROM eventos WHERE id = ?`;
-
-    const [eventos] = await pool.execute(query, [id]);
+    // Si es numérico, buscar por ID. Si no, buscar por título convertido a slug
+    const isNumeric = /^\d+$/.test(id);
+    let eventos = [];
+    
+    if (isNumeric) {
+      // Búsqueda por ID (compatibilidad con URLs antiguas)
+      query += ` FROM eventos WHERE id = ?`;
+      [eventos] = await pool.execute(query, [id]);
+    } else {
+      // Búsqueda por slug: obtener todos los eventos y comparar slugs generados
+      // Esto es necesario porque MySQL no puede hacer coincidencia exacta de slugs generados dinámicamente
+      query += ` FROM eventos`;
+      const [todosEventos] = await pool.execute(query);
+      
+      // Buscar el evento cuyo slug generado coincida
+      eventos = todosEventos.filter(evento => {
+        const slugEvento = generarSlug(evento.titulo);
+        return slugEvento === id;
+      });
+      
+      // Si no se encuentra, intentar buscar por ID como fallback (por si acaso el slug es un número)
+      if (eventos.length === 0) {
+        const numId = parseInt(id);
+        if (!isNaN(numId)) {
+          query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, created_at, updated_at`;
+          if (tieneFormaEspacio) {
+            query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height`;
+          }
+          if (tieneQrPago) {
+            query += `, qr_pago_url`;
+          }
+          query += ` FROM eventos WHERE id = ?`;
+          const [eventosPorId] = await pool.execute(query, [numId]);
+          if (eventosPorId.length > 0) {
+            eventos = eventosPorId;
+          }
+        }
+      }
+    }
 
     if (eventos.length === 0) {
       return res.status(404).json({
@@ -84,6 +124,7 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
     }
 
     const evento = eventos[0];
+    const eventoId = evento.id; // Usar el ID real del evento
 
     // Si es un evento especial, obtener todos los tipos de precio, mesas y asientos
     if (evento.tipo_evento === 'especial') {
@@ -92,7 +133,7 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
          FROM tipos_precio_evento
          WHERE evento_id = ? AND activo = 1
          ORDER BY precio DESC`,
-        [id]
+        [eventoId]
       );
       evento.tipos_precio = tiposPrecio;
       // También establecer el precio más bajo como precio principal
@@ -107,7 +148,7 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
          FROM mesas
          WHERE evento_id = ? AND activo = 1
          ORDER BY numero_mesa ASC`,
-        [id]
+        [eventoId]
       );
       evento.mesas = mesas;
 
@@ -119,7 +160,7 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
          LEFT JOIN areas_layout ar ON a.area_id = ar.id
          WHERE a.evento_id = ?
          ORDER BY a.mesa_id ASC, a.numero_asiento ASC`,
-        [id]
+        [eventoId]
       );
       evento.asientos = asientos;
 
@@ -130,7 +171,7 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
            FROM areas_layout
            WHERE evento_id = ?
            ORDER BY nombre ASC`,
-          [id]
+          [eventoId]
         );
         evento.areas = areas;
       } catch (error) {
@@ -144,6 +185,9 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
       evento.asientos = [];
       evento.areas = [];
     }
+
+    // Agregar slug generado desde el título
+    evento.slug = generarSlug(evento.titulo);
 
     res.json({
       success: true,
