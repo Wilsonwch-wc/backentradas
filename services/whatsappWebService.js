@@ -27,6 +27,8 @@ export const inicializarWhatsAppWeb = () => {
   const possibleChromePaths = [
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
+    '/usr/lib64/chromium-browser/chromium-browser',
+    '/usr/lib64/chromium-browser/chromium',
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable'
   ];
@@ -34,8 +36,30 @@ export const inicializarWhatsAppWeb = () => {
   let executablePath = null;
   for (const chromePath of possibleChromePaths) {
     if (fs.existsSync(chromePath)) {
-      executablePath = chromePath;
-      break;
+      // Resolver symlinks para obtener la ruta real
+      try {
+        const realPath = fs.realpathSync(chromePath);
+        if (fs.existsSync(realPath)) {
+          executablePath = realPath;
+          break;
+        }
+      } catch (e) {
+        // Si no se puede resolver, usar la ruta original
+        executablePath = chromePath;
+        break;
+      }
+    }
+  }
+  
+  // Si es un script .sh, buscar el ejecutable real en el directorio
+  if (executablePath && executablePath.endsWith('.sh')) {
+    const scriptDir = path.dirname(executablePath);
+    const chromeExecutable = path.join(scriptDir, 'chromium');
+    const chromeBrowserExecutable = path.join(scriptDir, 'chromium-browser');
+    if (fs.existsSync(chromeExecutable)) {
+      executablePath = chromeExecutable;
+    } else if (fs.existsSync(chromeBrowserExecutable)) {
+      executablePath = chromeBrowserExecutable;
     }
   }
 
