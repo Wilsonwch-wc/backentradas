@@ -24,11 +24,12 @@ export const inicializarWhatsAppWeb = () => {
   }
 
   // Detectar la ruta de Chromium/Chrome instalado en el sistema
+  // Orden importante: primero buscar el ejecutable real, luego los symlinks/scripts
   const possibleChromePaths = [
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/lib64/chromium-browser/chromium-browser',
-    '/usr/lib64/chromium-browser/chromium',
+    '/usr/lib64/chromium-browser/chromium-browser',  // Ejecutable real en AlmaLinux/RHEL
+    '/usr/lib64/chromium-browser/chromium',          // Alternativa
+    '/usr/bin/chromium',                              // Ejecutable directo
+    '/usr/bin/chromium-browser',                     // Symlink (resolver después)
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable'
   ];
@@ -36,37 +37,45 @@ export const inicializarWhatsAppWeb = () => {
   let executablePath = null;
   for (const chromePath of possibleChromePaths) {
     if (fs.existsSync(chromePath)) {
-      // Resolver symlinks para obtener la ruta real
-      try {
-        const realPath = fs.realpathSync(chromePath);
-        console.log(`🔍 Chromium encontrado en: ${chromePath} -> ${realPath}`);
-        if (fs.existsSync(realPath)) {
-          executablePath = realPath;
+      // Si es un script .sh, buscar el ejecutable real en el mismo directorio
+      if (chromePath.endsWith('.sh')) {
+        const scriptDir = path.dirname(chromePath);
+        const chromeExecutable = path.join(scriptDir, 'chromium-browser');
+        const chromeAltExecutable = path.join(scriptDir, 'chromium');
+        if (fs.existsSync(chromeExecutable) && !fs.statSync(chromeExecutable).isDirectory()) {
+          console.log(`🔍 Chromium encontrado (resuelto desde script): ${chromeExecutable}`);
+          executablePath = chromeExecutable;
+          break;
+        } else if (fs.existsSync(chromeAltExecutable) && !fs.statSync(chromeAltExecutable).isDirectory()) {
+          console.log(`🔍 Chromium encontrado (resuelto desde script): ${chromeAltExecutable}`);
+          executablePath = chromeAltExecutable;
           break;
         }
-      } catch (e) {
-        // Si no se puede resolver, usar la ruta original
-        console.log(`🔍 Chromium encontrado en: ${chromePath} (no se pudo resolver symlink)`);
-        executablePath = chromePath;
-        break;
+      } else {
+        // Verificar que sea un archivo ejecutable, no un directorio
+        try {
+          const stats = fs.statSync(chromePath);
+          if (stats.isFile()) {
+            // Resolver symlinks si es necesario
+            try {
+              const realPath = fs.realpathSync(chromePath);
+              console.log(`🔍 Chromium encontrado: ${chromePath} -> ${realPath}`);
+              if (fs.existsSync(realPath) && fs.statSync(realPath).isFile()) {
+                executablePath = realPath;
+                break;
+              }
+            } catch (e) {
+              // Si no se puede resolver, usar la ruta original
+              console.log(`🔍 Chromium encontrado: ${chromePath} (no se pudo resolver symlink)`);
+              executablePath = chromePath;
+              break;
+            }
+          }
+        } catch (e) {
+          // Continuar buscando en la siguiente ruta
+          continue;
+        }
       }
-    }
-  }
-  
-  // Si es un script .sh, buscar el ejecutable real en el directorio
-  if (executablePath && executablePath.endsWith('.sh')) {
-    const scriptDir = path.dirname(executablePath);
-    const chromeExecutable = path.join(scriptDir, 'chromium');
-    const chromeBrowserExecutable = path.join(scriptDir, 'chromium-browser');
-    if (fs.existsSync(chromeExecutable)) {
-      console.log(`✅ Usando ejecutable Chromium: ${chromeExecutable}`);
-      executablePath = chromeExecutable;
-    } else if (fs.existsSync(chromeBrowserExecutable)) {
-      console.log(`✅ Usando ejecutable Chromium: ${chromeBrowserExecutable}`);
-      executablePath = chromeBrowserExecutable;
-    } else {
-      // Si no encontramos el ejecutable, usar el script directamente
-      console.log(`⚠️ Usando script wrapper: ${executablePath}`);
     }
   }
   
