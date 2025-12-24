@@ -2020,6 +2020,24 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
       WHERE cm.compra_id = ? AND cm.estado = 'CONFIRMADO'
     `, [id]);
 
+    // Obtener entradas generales (para eventos sin asientos/mesas)
+    let entradasGenerales = [];
+    if (asientos.length === 0 && mesas.length === 0) {
+      const [entradas] = await pool.execute(`
+        SELECT 
+          id,
+          compra_id,
+          codigo_escaneo,
+          escaneado,
+          fecha_escaneo,
+          usuario_escaneo_id
+        FROM compras_entradas_generales
+        WHERE compra_id = ?
+        ORDER BY id ASC
+      `, [id]);
+      entradasGenerales = entradas;
+    }
+
     // Obtener información del evento
     const evento = {
       id: compra.evento_id,
@@ -2029,7 +2047,7 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
     };
 
     // Generar el PDF del boleto
-    const pdfPath = await generarBoletoPDF(compra, evento, asientos, mesas);
+    const pdfPath = await generarBoletoPDF(compra, evento, asientos, mesas, entradasGenerales);
     
     // Obtener la ruta completa del archivo
     const pdfPathCompleto = path.join(__dirname, '..', pdfPath.replace(/^\//, ''));
