@@ -773,25 +773,38 @@ export const tickearEntrada = async (req, res) => {
         };
 
       } else if (tipo === 'GENERAL') {
+        console.log('🔍 Buscando entrada GENERAL:', { codigo, compra_entrada_general_id });
         // Buscar entrada general por ID (si viene) o por código
         let entradasGenerales;
-        if (compra_entrada_general_id) {
-          [entradasGenerales] = await connection.execute(
-            `SELECT eg.*, c.estado as compra_estado
-             FROM compras_entradas_generales eg
-             INNER JOIN compras c ON eg.compra_id = c.id
-             WHERE eg.id = ? AND eg.codigo_escaneo = ? AND c.estado = 'PAGO_REALIZADO'`,
-            [compra_entrada_general_id, codigo]
-          );
-        } else {
-          // Si no viene el ID, buscar por código directamente
-          [entradasGenerales] = await connection.execute(
-            `SELECT eg.*, c.estado as compra_estado
-             FROM compras_entradas_generales eg
-             INNER JOIN compras c ON eg.compra_id = c.id
-             WHERE eg.codigo_escaneo = ? AND c.estado = 'PAGO_REALIZADO'`,
-            [codigo]
-          );
+        try {
+          if (compra_entrada_general_id) {
+            [entradasGenerales] = await connection.execute(
+              `SELECT eg.*, c.estado as compra_estado
+               FROM compras_entradas_generales eg
+               INNER JOIN compras c ON eg.compra_id = c.id
+               WHERE eg.id = ? AND eg.codigo_escaneo = ? AND c.estado = 'PAGO_REALIZADO'`,
+              [compra_entrada_general_id, codigo]
+            );
+          } else {
+            // Si no viene el ID, buscar por código directamente
+            [entradasGenerales] = await connection.execute(
+              `SELECT eg.*, c.estado as compra_estado
+               FROM compras_entradas_generales eg
+               INNER JOIN compras c ON eg.compra_id = c.id
+               WHERE eg.codigo_escaneo = ? AND c.estado = 'PAGO_REALIZADO'`,
+              [codigo]
+            );
+          }
+          console.log('✅ Entradas encontradas:', entradasGenerales.length);
+        } catch (dbError) {
+          console.error('❌ Error en consulta de entradas generales:', dbError);
+          await connection.rollback();
+          connection.release();
+          return res.status(500).json({
+            success: false,
+            message: 'Error al buscar entrada general',
+            error: dbError.message
+          });
         }
 
         if (entradasGenerales.length === 0) {
@@ -822,6 +835,15 @@ export const tickearEntrada = async (req, res) => {
            WHERE c.id = ?`,
           [entradaGeneral.compra_id]
         );
+
+        if (!compraInfo || compraInfo.length === 0) {
+          await connection.rollback();
+          connection.release();
+          return res.status(404).json({
+            success: false,
+            message: 'Información de compra no encontrada'
+          });
+        }
 
         // Marcar como escaneada
         await connection.execute(
