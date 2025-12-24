@@ -944,7 +944,9 @@ export const tickearEntrada = async (req, res) => {
       // Enviar notificación por WhatsApp (si hay teléfono y datos)
       if (datosNotificacion && datosNotificacion.telefono) {
         try {
+          // Formatear fecha y hora en zona horaria de Bolivia (America/La_Paz, UTC-4)
           const fechaHora = new Date().toLocaleString('es-ES', {
+            timeZone: 'America/La_Paz',
             weekday: 'long',
             year: 'numeric',
             month: 'long',
