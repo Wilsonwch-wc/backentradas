@@ -772,22 +772,34 @@ export const tickearEntrada = async (req, res) => {
           compra_id: mesa.compra_id
         };
 
-      } else if (tipo === 'GENERAL' && compra_entrada_general_id) {
-        // Verificar que existe, está confirmada y no está escaneada
-        const [entradasGenerales] = await connection.execute(
-          `SELECT eg.*, c.estado as compra_estado
-           FROM compras_entradas_generales eg
-           INNER JOIN compras c ON eg.compra_id = c.id
-           WHERE eg.id = ? AND eg.codigo_escaneo = ? AND c.estado = 'PAGO_REALIZADO'`,
-          [compra_entrada_general_id, codigo]
-        );
+      } else if (tipo === 'GENERAL') {
+        // Buscar entrada general por ID (si viene) o por código
+        let entradasGenerales;
+        if (compra_entrada_general_id) {
+          [entradasGenerales] = await connection.execute(
+            `SELECT eg.*, c.estado as compra_estado
+             FROM compras_entradas_generales eg
+             INNER JOIN compras c ON eg.compra_id = c.id
+             WHERE eg.id = ? AND eg.codigo_escaneo = ? AND c.estado = 'PAGO_REALIZADO'`,
+            [compra_entrada_general_id, codigo]
+          );
+        } else {
+          // Si no viene el ID, buscar por código directamente
+          [entradasGenerales] = await connection.execute(
+            `SELECT eg.*, c.estado as compra_estado
+             FROM compras_entradas_generales eg
+             INNER JOIN compras c ON eg.compra_id = c.id
+             WHERE eg.codigo_escaneo = ? AND c.estado = 'PAGO_REALIZADO'`,
+            [codigo]
+          );
+        }
 
         if (entradasGenerales.length === 0) {
           await connection.rollback();
           connection.release();
           return res.status(404).json({
             success: false,
-            message: 'Entrada general no encontrada'
+            message: 'Entrada general no encontrada o no confirmada'
           });
         }
 
