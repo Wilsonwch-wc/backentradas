@@ -645,10 +645,20 @@ export const tickearEntrada = async (req, res) => {
 
     try {
       if (tipo === 'ASIENTO' && compra_asiento_id) {
-        // Verificar que existe y no está escaneada
+        // Verificar que existe y no está escaneada, obtener detalles del asiento
         const [asientos] = await connection.execute(
-          `SELECT * FROM compras_asientos 
-           WHERE id = ? AND codigo_escaneo = ? AND estado = 'CONFIRMADO'`,
+          `SELECT 
+            ca.*,
+            a.numero_asiento,
+            a.mesa_id,
+            m.numero_mesa,
+            m.capacidad_sillas,
+            tp.nombre as tipo_precio_nombre
+           FROM compras_asientos ca
+           INNER JOIN asientos a ON ca.asiento_id = a.id
+           LEFT JOIN mesas m ON a.mesa_id = m.id
+           LEFT JOIN tipos_precio_evento tp ON a.tipo_precio_id = tp.id
+           WHERE ca.id = ? AND ca.codigo_escaneo = ? AND ca.estado = 'CONFIRMADO'`,
           [compra_asiento_id, codigo]
         );
 
@@ -708,21 +718,34 @@ export const tickearEntrada = async (req, res) => {
           ['ASIENTO', asiento.id, asiento.compra_id, compraInfo[0].evento_id, usuarioId, JSON.stringify({ codigo_escaneo: codigo })]
         );
 
-        // Preparar datos para notificación
+        // Preparar datos para notificación con detalles del asiento
+        let detalleAsiento = `Asiento S${asiento.numero_asiento}`;
+        if (asiento.mesa_id && asiento.numero_mesa) {
+          detalleAsiento = `Silla S${asiento.numero_asiento} de Mesa M${asiento.numero_mesa}`;
+        }
+
         datosNotificacion = {
           telefono: compraInfo[0]?.cliente_telefono,
           nombre: compraInfo[0]?.cliente_nombre,
           evento: compraInfo[0]?.evento_titulo,
           codigo: codigo,
           tipo: 'Asiento',
+          detalle: detalleAsiento,
+          numero_asiento: asiento.numero_asiento,
+          numero_mesa: asiento.numero_mesa || null,
           compra_id: asiento.compra_id
         };
 
       } else if (tipo === 'MESA' && compra_mesa_id) {
-        // Verificar que existe y no está escaneada
+        // Verificar que existe y no está escaneada, obtener detalles de la mesa
         const [mesas] = await connection.execute(
-          `SELECT * FROM compras_mesas 
-           WHERE id = ? AND codigo_escaneo = ? AND estado = 'CONFIRMADO'`,
+          `SELECT 
+            cm.*,
+            m.numero_mesa,
+            m.capacidad_sillas
+           FROM compras_mesas cm
+           INNER JOIN mesas m ON cm.mesa_id = m.id
+           WHERE cm.id = ? AND cm.codigo_escaneo = ? AND cm.estado = 'CONFIRMADO'`,
           [compra_mesa_id, codigo]
         );
 
@@ -782,13 +805,18 @@ export const tickearEntrada = async (req, res) => {
           ['MESA', mesa.id, mesa.compra_id, compraInfo[0].evento_id, usuarioId, JSON.stringify({ codigo_escaneo: codigo })]
         );
 
-        // Preparar datos para notificación
+        // Preparar datos para notificación con detalles de la mesa
+        const detalleMesa = `Mesa M${mesa.numero_mesa} (${mesa.capacidad_sillas || mesa.cantidad_sillas || 0} silla${(mesa.capacidad_sillas || mesa.cantidad_sillas || 0) > 1 ? 's' : ''})`;
+
         datosNotificacion = {
           telefono: compraInfo[0]?.cliente_telefono,
           nombre: compraInfo[0]?.cliente_nombre,
           evento: compraInfo[0]?.evento_titulo,
           codigo: codigo,
           tipo: 'Mesa',
+          detalle: detalleMesa,
+          numero_mesa: mesa.numero_mesa,
+          cantidad_sillas: mesa.capacidad_sillas || mesa.cantidad_sillas || 0,
           compra_id: mesa.compra_id
         };
 
@@ -890,6 +918,7 @@ export const tickearEntrada = async (req, res) => {
           evento: compraInfo[0]?.evento_titulo,
           codigo: codigo,
           tipo: 'General',
+          detalle: 'Entrada General',
           compra_id: entradaGeneral.compra_id
         };
 
@@ -925,11 +954,12 @@ export const tickearEntrada = async (req, res) => {
             second: '2-digit'
           });
 
-          const mensajeNotificacion = `🔔 *NOTIFICACIÓN DE ESCANEO*\n\n` +
+          // Construir mensaje con detalles específicos según el tipo
+          let mensajeNotificacion = `🔔 *NOTIFICACIÓN DE ESCANEO*\n\n` +
             `Hola *${datosNotificacion.nombre || 'Cliente'}*,\n\n` +
             `Tu entrada ha sido escaneada exitosamente:\n\n` +
             `📅 *Evento:* ${datosNotificacion.evento || 'Evento'}\n` +
-            `🎫 *Tipo:* Entrada ${datosNotificacion.tipo}\n` +
+            `🎫 *Entrada:* ${datosNotificacion.detalle || `Entrada ${datosNotificacion.tipo}`}\n` +
             `🔑 *Código:* ${datosNotificacion.codigo}\n` +
             `🕒 *Fecha y hora:* ${fechaHora}\n\n` +
             `¡Gracias por asistir al evento! 🎉`;
