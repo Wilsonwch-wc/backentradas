@@ -698,7 +698,7 @@ export const tickearEntrada = async (req, res) => {
         );
 
         // Preparar datos para notificación
-        var datosNotificacion = {
+        datosNotificacion = {
           telefono: compraInfo[0]?.cliente_telefono,
           nombre: compraInfo[0]?.cliente_nombre,
           evento: compraInfo[0]?.evento_titulo,
@@ -763,7 +763,7 @@ export const tickearEntrada = async (req, res) => {
         );
 
         // Preparar datos para notificación
-        var datosNotificacion = {
+        datosNotificacion = {
           telefono: compraInfo[0]?.cliente_telefono,
           nombre: compraInfo[0]?.cliente_nombre,
           evento: compraInfo[0]?.evento_titulo,
@@ -773,10 +773,12 @@ export const tickearEntrada = async (req, res) => {
         };
 
       } else if (tipo === 'GENERAL' && compra_entrada_general_id) {
-        // Verificar que existe y no está escaneada
+        // Verificar que existe, está confirmada y no está escaneada
         const [entradasGenerales] = await connection.execute(
-          `SELECT * FROM compras_entradas_generales 
-           WHERE id = ? AND codigo_escaneo = ?`,
+          `SELECT eg.*, c.estado as compra_estado
+           FROM compras_entradas_generales eg
+           INNER JOIN compras c ON eg.compra_id = c.id
+           WHERE eg.id = ? AND eg.codigo_escaneo = ? AND c.estado = 'PAGO_REALIZADO'`,
           [compra_entrada_general_id, codigo]
         );
 
@@ -840,17 +842,24 @@ export const tickearEntrada = async (req, res) => {
       } else {
         await connection.rollback();
         connection.release();
+        console.error('❌ Tipo de entrada no válido en tickearEntrada:', {
+          tipo,
+          compra_asiento_id,
+          compra_mesa_id,
+          compra_entrada_general_id,
+          codigo
+        });
         return res.status(400).json({
           success: false,
-          message: 'Tipo de entrada o ID no válido'
+          message: `Tipo de entrada o ID no válido. Tipo recibido: "${tipo}". Se requiere: ASIENTO+compra_asiento_id, MESA+compra_mesa_id, o GENERAL+compra_entrada_general_id`
         });
       }
 
       await connection.commit();
       connection.release();
 
-      // Enviar notificación por WhatsApp (si hay teléfono)
-      if (datosNotificacion.telefono) {
+      // Enviar notificación por WhatsApp (si hay teléfono y datos)
+      if (datosNotificacion && datosNotificacion.telefono) {
         try {
           const fechaHora = new Date().toLocaleString('es-ES', {
             weekday: 'long',
