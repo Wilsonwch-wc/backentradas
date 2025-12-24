@@ -345,12 +345,28 @@ export const obtenerCompraPorCodigo = async (req, res) => {
       [compra.id]
     );
 
+    // Obtener entradas generales (para eventos generales)
+    const [entradasGenerales] = await pool.execute(
+      `SELECT 
+        id,
+        compra_id,
+        codigo_escaneo,
+        escaneado,
+        fecha_escaneo,
+        usuario_escaneo_id
+       FROM compras_entradas_generales
+       WHERE compra_id = ?
+       ORDER BY id ASC`,
+      [compra.id]
+    );
+
     res.json({
       success: true,
       data: {
         ...compra,
         asientos,
-        mesas
+        mesas,
+        entradas_generales: entradasGenerales
       }
     });
 
