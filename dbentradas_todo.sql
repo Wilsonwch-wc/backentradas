@@ -379,7 +379,7 @@ DROP TABLE IF EXISTS `escaneos_entradas`;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `escaneos_entradas` (
   `id` int NOT NULL AUTO_INCREMENT,
-  `tipo` enum('ASIENTO','MESA') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tipo` enum('ASIENTO','MESA','GENERAL') COLLATE utf8mb4_unicode_ci NOT NULL,
   `compra_asiento_id` int DEFAULT NULL,
   `compra_mesa_id` int DEFAULT NULL,
   `compra_id` int NOT NULL,
