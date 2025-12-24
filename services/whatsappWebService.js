@@ -239,6 +239,92 @@ const formatearNumero = (telefono) => {
 };
 
 /**
+ * Envía un mensaje de texto por WhatsApp Web
+ * @param {string} telefono - Número de teléfono del cliente
+ * @param {string} mensaje - Mensaje a enviar
+ * @returns {Promise<Object>} - Resultado del envío
+ */
+export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
+  try {
+    // Verificar que el cliente esté listo y realmente conectado
+    if (!client) {
+      console.log('⚠️ Cliente de WhatsApp Web no existe, reinicializando...');
+      inicializarWhatsAppWeb();
+      return {
+        success: false,
+        message: 'WhatsApp Web no está inicializado. Por favor, espera unos segundos e intenta nuevamente.'
+      };
+    }
+
+    // Verificar que el cliente esté listo
+    if (!isReady) {
+      try {
+        const info = await client.info;
+        if (!info) {
+          throw new Error('Cliente no conectado');
+        }
+        isReady = true;
+      } catch (err) {
+        return {
+          success: false,
+          message: 'WhatsApp Web no está listo. Por favor, escanea el código QR primero.'
+        };
+      }
+    }
+
+    // Verificación adicional: intentar obtener el estado del cliente
+    try {
+      const info = await client.info;
+      if (!info || !info.wid) {
+        throw new Error('Cliente no autenticado');
+      }
+    } catch (err) {
+      console.error('❌ Cliente no autenticado:', err.message);
+      isReady = false;
+      return {
+        success: false,
+        message: 'WhatsApp Web no está autenticado. Por favor, escanea el código QR nuevamente.'
+      };
+    }
+
+    // Formatear número
+    const numeroFormateado = formatearNumero(telefono);
+
+    // Enviar el mensaje con timeout
+    const sendPromise = client.sendMessage(numeroFormateado, mensaje);
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Timeout: El envío tardó demasiado')), 30000); // 30 segundos
+    });
+
+    await Promise.race([sendPromise, timeoutPromise]);
+
+    return {
+      success: true,
+      message: 'Mensaje enviado exitosamente por WhatsApp Web',
+      telefono: telefono
+    };
+
+  } catch (error) {
+    console.error('❌ Error al enviar mensaje por WhatsApp Web:', error);
+    
+    // Si el error es de conexión, marcar como no listo
+    if (error.message?.includes('Protocol error') || 
+        error.message?.includes('ERR_HTTP2_PROTOCOL_ERROR') ||
+        error.message?.includes('Session closed') ||
+        error.message?.includes('not authenticated')) {
+      isReady = false;
+      console.log('⚠️ Cliente marcado como no listo debido a error de conexión');
+    }
+    
+    return {
+      success: false,
+      message: error.message || 'Error al enviar el mensaje',
+      error: error.message
+    };
+  }
+};
+
+/**
  * Envía un PDF por WhatsApp Web
  * @param {string} telefono - Número de teléfono del cliente
  * @param {string} pdfPath - Ruta del archivo PDF

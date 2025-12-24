@@ -1,6 +1,6 @@
 import pool from '../config/db.js';
 import { generarBoletoPDF } from '../services/boletoService.js';
-import { enviarPDFPorWhatsAppWeb as enviarPDFWhatsAppWebService, obtenerEstadoWhatsApp, reiniciarWhatsAppWeb } from '../services/whatsappWebService.js';
+import { enviarPDFPorWhatsAppWeb as enviarPDFWhatsAppWebService, enviarMensajePorWhatsAppWeb, obtenerEstadoWhatsApp, reiniciarWhatsAppWeb } from '../services/whatsappWebService.js';
 import { enviarBoletoPorEmail as enviarBoletoPorEmailService } from '../services/emailService.js';
 import path from 'path';
 import fs from 'fs';
@@ -670,9 +670,12 @@ export const tickearEntrada = async (req, res) => {
           });
         }
 
-        // Obtener info del evento
+        // Obtener info del evento y datos de compra para notificación
         const [compraInfo] = await connection.execute(
-          `SELECT evento_id FROM compras WHERE id = ?`,
+          `SELECT c.evento_id, c.cliente_telefono, c.cliente_nombre, e.titulo as evento_titulo 
+           FROM compras c 
+           INNER JOIN eventos e ON c.evento_id = e.id 
+           WHERE c.id = ?`,
           [asiento.compra_id]
         );
 
@@ -693,6 +696,16 @@ export const tickearEntrada = async (req, res) => {
            VALUES (?, ?, ?, ?, ?, ?)`,
           ['ASIENTO', asiento.id, asiento.compra_id, compraInfo[0].evento_id, usuarioId, JSON.stringify({ codigo_escaneo: codigo })]
         );
+
+        // Preparar datos para notificación
+        var datosNotificacion = {
+          telefono: compraInfo[0]?.cliente_telefono,
+          nombre: compraInfo[0]?.cliente_nombre,
+          evento: compraInfo[0]?.evento_titulo,
+          codigo: codigo,
+          tipo: 'Asiento',
+          compra_id: asiento.compra_id
+        };
 
       } else if (tipo === 'MESA' && compra_mesa_id) {
         // Verificar que existe y no está escaneada
@@ -722,9 +735,12 @@ export const tickearEntrada = async (req, res) => {
           });
         }
 
-        // Obtener info del evento
+        // Obtener info del evento y datos de compra para notificación
         const [compraInfo] = await connection.execute(
-          `SELECT evento_id FROM compras WHERE id = ?`,
+          `SELECT c.evento_id, c.cliente_telefono, c.cliente_nombre, e.titulo as evento_titulo 
+           FROM compras c 
+           INNER JOIN eventos e ON c.evento_id = e.id 
+           WHERE c.id = ?`,
           [mesa.compra_id]
         );
 
@@ -745,6 +761,82 @@ export const tickearEntrada = async (req, res) => {
            VALUES (?, ?, ?, ?, ?, ?)`,
           ['MESA', mesa.id, mesa.compra_id, compraInfo[0].evento_id, usuarioId, JSON.stringify({ codigo_escaneo: codigo })]
         );
+
+        // Preparar datos para notificación
+        var datosNotificacion = {
+          telefono: compraInfo[0]?.cliente_telefono,
+          nombre: compraInfo[0]?.cliente_nombre,
+          evento: compraInfo[0]?.evento_titulo,
+          codigo: codigo,
+          tipo: 'Mesa',
+          compra_id: mesa.compra_id
+        };
+
+      } else if (tipo === 'GENERAL' && compra_entrada_general_id) {
+        // Verificar que existe y no está escaneada
+        const [entradasGenerales] = await connection.execute(
+          `SELECT * FROM compras_entradas_generales 
+           WHERE id = ? AND codigo_escaneo = ?`,
+          [compra_entrada_general_id, codigo]
+        );
+
+        if (entradasGenerales.length === 0) {
+          await connection.rollback();
+          connection.release();
+          return res.status(404).json({
+            success: false,
+            message: 'Entrada general no encontrada'
+          });
+        }
+
+        const entradaGeneral = entradasGenerales[0];
+
+        if (entradaGeneral.escaneado) {
+          await connection.rollback();
+          connection.release();
+          return res.status(400).json({
+            success: false,
+            message: 'Esta entrada ya fue escaneada anteriormente'
+          });
+        }
+
+        // Obtener info del evento y compra
+        const [compraInfo] = await connection.execute(
+          `SELECT c.evento_id, c.cliente_telefono, c.cliente_nombre, e.titulo as evento_titulo 
+           FROM compras c 
+           INNER JOIN eventos e ON c.evento_id = e.id 
+           WHERE c.id = ?`,
+          [entradaGeneral.compra_id]
+        );
+
+        // Marcar como escaneada
+        await connection.execute(
+          `UPDATE compras_entradas_generales 
+           SET escaneado = TRUE, 
+               fecha_escaneo = NOW(), 
+               usuario_escaneo_id = ?
+           WHERE id = ?`,
+          [usuarioId, entradaGeneral.id]
+        );
+
+        // Registrar en tabla de auditoría
+        await connection.execute(
+          `INSERT INTO escaneos_entradas 
+           (tipo, compra_entrada_general_id, compra_id, evento_id, usuario_escaneo_id, datos_qr)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          ['GENERAL', entradaGeneral.id, entradaGeneral.compra_id, compraInfo[0].evento_id, usuarioId, JSON.stringify({ codigo_escaneo: codigo })]
+        );
+
+        // Preparar datos para notificación
+        datosNotificacion = {
+          telefono: compraInfo[0]?.cliente_telefono,
+          nombre: compraInfo[0]?.cliente_nombre,
+          evento: compraInfo[0]?.evento_titulo,
+          codigo: codigo,
+          tipo: 'General',
+          compra_id: entradaGeneral.compra_id
+        };
+
       } else {
         await connection.rollback();
         connection.release();
@@ -756,6 +848,44 @@ export const tickearEntrada = async (req, res) => {
 
       await connection.commit();
       connection.release();
+
+      // Enviar notificación por WhatsApp (si hay teléfono)
+      if (datosNotificacion.telefono) {
+        try {
+          const fechaHora = new Date().toLocaleString('es-ES', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+
+          const mensajeNotificacion = `🔔 *NOTIFICACIÓN DE ESCANEO*\n\n` +
+            `Hola *${datosNotificacion.nombre || 'Cliente'}*,\n\n` +
+            `Tu entrada ha sido escaneada exitosamente:\n\n` +
+            `📅 *Evento:* ${datosNotificacion.evento || 'Evento'}\n` +
+            `🎫 *Tipo:* Entrada ${datosNotificacion.tipo}\n` +
+            `🔑 *Código:* ${datosNotificacion.codigo}\n` +
+            `🕒 *Fecha y hora:* ${fechaHora}\n\n` +
+            `¡Gracias por asistir al evento! 🎉`;
+
+          const resultadoNotificacion = await enviarMensajePorWhatsAppWeb(
+            datosNotificacion.telefono,
+            mensajeNotificacion
+          );
+
+          if (resultadoNotificacion.success) {
+            console.log(`✅ Notificación enviada a ${datosNotificacion.telefono}`);
+          } else {
+            console.log(`⚠️ No se pudo enviar notificación: ${resultadoNotificacion.message}`);
+          }
+        } catch (error) {
+          console.error('❌ Error al enviar notificación por WhatsApp:', error);
+          // No fallar el proceso si falla la notificación
+        }
+      }
 
       console.log('✅ Entrada tickeada correctamente');
 
