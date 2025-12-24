@@ -641,6 +641,8 @@ export const tickearEntrada = async (req, res) => {
     const connection = await pool.getConnection();
     await connection.beginTransaction();
 
+    let datosNotificacion = null; // Declarar variable fuera de los ifs
+
     try {
       if (tipo === 'ASIENTO' && compra_asiento_id) {
         // Verificar que existe y no está escaneada
