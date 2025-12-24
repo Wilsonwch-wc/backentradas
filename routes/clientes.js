@@ -1,11 +1,14 @@
 import express from 'express';
-import { verifyToken } from '../middleware/auth.js';
+import { verifyToken, requireAdmin } from '../middleware/auth.js';
 import {
   loginConGoogle,
   registrarCliente,
   loginCliente,
   verifyCliente,
-  actualizarCliente
+  actualizarCliente,
+  obtenerClientes,
+  actualizarClienteAdmin,
+  eliminarCliente
 } from '../controllers/clientesController.js';
 
 const router = express.Router();
@@ -15,9 +18,14 @@ router.post('/google', loginConGoogle);
 router.post('/registro', registrarCliente);
 router.post('/login', loginCliente);
 
-// Rutas protegidas
+// Rutas protegidas (cliente autenticado)
 router.get('/verify', verifyToken, verifyCliente);
 router.put('/actualizar', verifyToken, actualizarCliente);
+
+// Rutas protegidas (solo admin)
+router.get('/admin', verifyToken, requireAdmin, obtenerClientes);
+router.put('/admin/:id', verifyToken, requireAdmin, actualizarClienteAdmin);
+router.delete('/admin/:id', verifyToken, requireAdmin, eliminarCliente);
 
 export default router;
 

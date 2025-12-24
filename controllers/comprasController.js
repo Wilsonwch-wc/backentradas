@@ -1942,13 +1942,14 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Verificar estado de WhatsApp Web
-    const estadoWhatsApp = obtenerEstadoWhatsApp();
+    // Verificar estado de WhatsApp Web (ahora es async)
+    const estadoWhatsApp = await obtenerEstadoWhatsApp();
     if (!estadoWhatsApp.isReady) {
       return res.status(503).json({
         success: false,
         message: 'WhatsApp Web no está listo. Por favor, escanea el código QR primero.',
         qrCode: estadoWhatsApp.qrCode,
+        qrCodeImage: estadoWhatsApp.qrCodeImage,
         isReady: false
       });
     }
@@ -2088,7 +2089,7 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
 // Obtener estado de WhatsApp Web
 export const obtenerEstadoWhatsAppWeb = async (req, res) => {
   try {
-    const estado = obtenerEstadoWhatsApp();
+    const estado = await obtenerEstadoWhatsApp();
     res.json({
       success: true,
       ...estado

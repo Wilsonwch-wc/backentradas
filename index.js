@@ -46,6 +46,9 @@ app.use('/images', express.static(path.join(__dirname, 'images')));
 // Servir boletos PDF
 app.use('/uploads/boletos', express.static(path.join(__dirname, 'uploads/boletos')));
 
+// Servir reportes exportados (Excel y PDF)
+app.use('/uploads/reportes', express.static(path.join(__dirname, 'uploads/reportes')));
+
 // Verificar conexión a la base de datos al iniciar
 const testConnection = async () => {
   try {

@@ -558,3 +558,159 @@ export const actualizarCliente = async (req, res) => {
   }
 };
 
+// Obtener todos los clientes (solo admin)
+export const obtenerClientes = async (req, res) => {
+  try {
+    const [clientes] = await pool.execute(
+      `SELECT id, nombre, apellido, nombre_completo, correo, telefono, 
+              provider, foto_perfil, email_verificado, activo, 
+              created_at, updated_at
+       FROM clientes
+       ORDER BY created_at DESC`
+    );
+
+    res.json({
+      success: true,
+      data: clientes
+    });
+  } catch (error) {
+    console.error('Error al obtener clientes:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener los clientes',
+      error: error.message
+    });
+  }
+};
+
+// Actualizar un cliente (solo admin)
+export const actualizarClienteAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nombre, apellido, nombre_completo, correo, telefono, activo } = req.body;
+
+    // Verificar que el cliente existe
+    const [clientesExistentes] = await pool.execute(
+      'SELECT id FROM clientes WHERE id = ?',
+      [id]
+    );
+
+    if (clientesExistentes.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cliente no encontrado'
+      });
+    }
+
+    // Construir la consulta dinámicamente
+    const updates = [];
+    const values = [];
+
+    if (nombre !== undefined) {
+      updates.push('nombre = ?');
+      values.push(nombre);
+    }
+    if (apellido !== undefined) {
+      updates.push('apellido = ?');
+      values.push(apellido);
+    }
+    if (nombre_completo !== undefined) {
+      updates.push('nombre_completo = ?');
+      values.push(nombre_completo);
+    }
+    if (correo !== undefined) {
+      // Verificar que el correo no esté en uso por otro cliente
+      const [correoExiste] = await pool.execute(
+        'SELECT id FROM clientes WHERE correo = ? AND id != ?',
+        [correo, id]
+      );
+      if (correoExiste.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'El correo ya está en uso por otro cliente'
+        });
+      }
+      updates.push('correo = ?');
+      values.push(correo);
+    }
+    if (telefono !== undefined) {
+      updates.push('telefono = ?');
+      values.push(telefono);
+    }
+    if (activo !== undefined) {
+      updates.push('activo = ?');
+      values.push(activo ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se proporcionaron campos para actualizar'
+      });
+    }
+
+    values.push(id);
+    await pool.execute(
+      `UPDATE clientes SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    // Obtener el cliente actualizado
+    const [clientesActualizados] = await pool.execute(
+      `SELECT id, nombre, apellido, nombre_completo, correo, telefono, 
+              provider, foto_perfil, email_verificado, activo, 
+              created_at, updated_at
+       FROM clientes WHERE id = ?`,
+      [id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Cliente actualizado exitosamente',
+      data: clientesActualizados[0]
+    });
+  } catch (error) {
+    console.error('Error al actualizar cliente:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al actualizar el cliente',
+      error: error.message
+    });
+  }
+};
+
+// Eliminar un cliente (solo admin)
+export const eliminarCliente = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Verificar que el cliente existe
+    const [clientes] = await pool.execute(
+      'SELECT id FROM clientes WHERE id = ?',
+      [id]
+    );
+
+    if (clientes.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Cliente no encontrado'
+      });
+    }
+
+    // Eliminar el cliente (cascade eliminará las compras relacionadas)
+    await pool.execute('DELETE FROM clientes WHERE id = ?', [id]);
+
+    res.json({
+      success: true,
+      message: 'Cliente eliminado exitosamente'
+    });
+  } catch (error) {
+    console.error('Error al eliminar cliente:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al eliminar el cliente',
+      error: error.message
+    });
+  }
+};
+

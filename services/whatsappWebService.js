@@ -86,7 +86,17 @@ export const inicializarWhatsAppWeb = () => {
 
   const puppeteerConfig = {
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process'
+    ]
   };
 
   // Si encontramos Chromium en el sistema, usarlo
@@ -135,11 +145,28 @@ export const inicializarWhatsAppWeb = () => {
   client.on('disconnected', (reason) => {
     console.log('⚠️ WhatsApp Web desconectado:', reason);
     isReady = false;
-    client = null;
-    // Si la sesión se cerró desde el teléfono, limpiamos QR para que se regenere
+    // No destruir el cliente inmediatamente, intentar reconectar
     if (reason === 'LOGOUT' || reason === 'NAVIGATION') {
       qrCodeData = null;
       qrCodeImage = null;
+      client = null;
+      // Reinicializar después de un breve delay
+      setTimeout(() => {
+        if (!client) {
+          console.log('🔄 Intentando reconectar WhatsApp Web...');
+          inicializarWhatsAppWeb();
+        }
+      }, 5000);
+    } else {
+      // Para otros tipos de desconexión, intentar reconectar
+      setTimeout(() => {
+        if (client && !isReady) {
+          console.log('🔄 Intentando reconectar WhatsApp Web...');
+          client.initialize().catch(err => {
+            console.error('❌ Error al reconectar:', err.message);
+          });
+        }
+      }, 5000);
     }
   });
 
@@ -169,9 +196,24 @@ export const inicializarWhatsAppWeb = () => {
 /**
  * Obtiene el estado del cliente de WhatsApp Web
  */
-export const obtenerEstadoWhatsApp = () => {
+export const obtenerEstadoWhatsApp = async () => {
+  let isActuallyReady = isReady;
+  
+  // Verificar si el cliente está realmente conectado
+  if (client && isReady) {
+    try {
+      const info = await client.info;
+      isActuallyReady = !!(info && info.wid);
+    } catch (err) {
+      // Si hay error al obtener info, el cliente no está realmente listo
+      isActuallyReady = false;
+      isReady = false;
+      console.log('⚠️ Cliente marcado como no listo después de verificar estado');
+    }
+  }
+  
   return {
-    isReady,
+    isReady: isActuallyReady,
     qrCode: qrCodeData,
     qrCodeImage: qrCodeImage,
     isInitialized: client !== null
@@ -205,9 +247,40 @@ const formatearNumero = (telefono) => {
  */
 export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') => {
   try {
+    // Verificar que el cliente esté listo y realmente conectado
+    if (!client) {
+      // Intentar reinicializar si no hay cliente
+      console.log('⚠️ Cliente de WhatsApp Web no existe, reinicializando...');
+      inicializarWhatsAppWeb();
+      throw new Error('WhatsApp Web no está inicializado. Por favor, espera unos segundos e intenta nuevamente.');
+    }
+
     // Verificar que el cliente esté listo
-    if (!client || !isReady) {
-      throw new Error('WhatsApp Web no está listo. Por favor, escanea el código QR primero.');
+    if (!isReady) {
+      // Verificar si el cliente está realmente conectado
+      try {
+        const info = await client.info;
+        if (!info) {
+          throw new Error('Cliente no conectado');
+        }
+        // Si tiene info, actualizar isReady
+        isReady = true;
+      } catch (err) {
+        // El cliente no está realmente listo
+        throw new Error('WhatsApp Web no está listo. Por favor, escanea el código QR primero.');
+      }
+    }
+
+    // Verificación adicional: intentar obtener el estado del cliente
+    try {
+      const info = await client.info;
+      if (!info || !info.wid) {
+        throw new Error('Cliente no autenticado');
+      }
+    } catch (err) {
+      console.error('❌ Cliente no autenticado:', err.message);
+      isReady = false;
+      throw new Error('WhatsApp Web no está autenticado. Por favor, escanea el código QR nuevamente.');
     }
 
     // Verificar que el archivo existe
@@ -229,7 +302,13 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
     );
 
     // Enviar el PDF con el mensaje como caption
-    await client.sendMessage(numeroFormateado, media, { caption: mensaje });
+    // Agregar timeout para evitar que se quede colgado
+    const sendPromise = client.sendMessage(numeroFormateado, media, { caption: mensaje });
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Timeout: El envío tardó demasiado')), 60000); // 60 segundos
+    });
+
+    await Promise.race([sendPromise, timeoutPromise]);
 
     return {
       success: true,
@@ -239,6 +318,16 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
 
   } catch (error) {
     console.error('❌ Error al enviar PDF por WhatsApp Web:', error);
+    
+    // Si el error es de conexión, marcar como no listo
+    if (error.message?.includes('Protocol error') || 
+        error.message?.includes('ERR_HTTP2_PROTOCOL_ERROR') ||
+        error.message?.includes('Session closed') ||
+        error.message?.includes('not authenticated')) {
+      isReady = false;
+      console.log('⚠️ Cliente marcado como no listo debido a error de conexión');
+    }
+    
     return {
       success: false,
       message: error.message || 'Error al enviar el PDF',
