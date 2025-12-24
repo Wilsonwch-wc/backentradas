@@ -679,6 +679,15 @@ export const tickearEntrada = async (req, res) => {
           [asiento.compra_id]
         );
 
+        if (!compraInfo || compraInfo.length === 0) {
+          await connection.rollback();
+          connection.release();
+          return res.status(404).json({
+            success: false,
+            message: 'Información de compra no encontrada'
+          });
+        }
+
         // Marcar como escaneado
         await connection.execute(
           `UPDATE compras_asientos 
@@ -743,6 +752,15 @@ export const tickearEntrada = async (req, res) => {
            WHERE c.id = ?`,
           [mesa.compra_id]
         );
+
+        if (!compraInfo || compraInfo.length === 0) {
+          await connection.rollback();
+          connection.release();
+          return res.status(404).json({
+            success: false,
+            message: 'Información de compra no encontrada'
+          });
+        }
 
         // Marcar como escaneada
         await connection.execute(
