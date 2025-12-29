@@ -198,12 +198,24 @@ export const inicializarWhatsAppWeb = () => {
  */
 export const obtenerEstadoWhatsApp = async () => {
   let isActuallyReady = isReady;
+  let numeroWhatsApp = null;
   
   // Verificar si el cliente está realmente conectado
   if (client && isReady) {
     try {
       const info = await client.info;
       isActuallyReady = !!(info && info.wid);
+      if (info && info.wid) {
+        // Extraer el número de teléfono del wid (formato: "XXXXXXXXXX@c.us")
+        const widString = info.wid.user || info.wid.toString();
+        numeroWhatsApp = widString.replace('@c.us', '').replace('@s.whatsapp.net', '');
+        // Formatear el número con el código de país
+        if (numeroWhatsApp.startsWith('591')) {
+          numeroWhatsApp = '+' + numeroWhatsApp;
+        } else if (!numeroWhatsApp.startsWith('+')) {
+          numeroWhatsApp = '+591' + numeroWhatsApp;
+        }
+      }
     } catch (err) {
       // Si hay error al obtener info, el cliente no está realmente listo
       isActuallyReady = false;
@@ -216,7 +228,8 @@ export const obtenerEstadoWhatsApp = async () => {
     isReady: isActuallyReady,
     qrCode: qrCodeData,
     qrCodeImage: qrCodeImage,
-    isInitialized: client !== null
+    isInitialized: client !== null,
+    numeroWhatsApp: numeroWhatsApp
   };
 };
 
