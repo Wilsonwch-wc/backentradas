@@ -170,7 +170,8 @@ export const crearEvento = async (req, res) => {
 
     // Usar una imagen por defecto si no se envía ninguna
     // Esto evita errores cuando el frontend no envía el campo imagen
-    const imagenFinal = imagen || '/images/logprincipal.jpg';
+    // Maneja: null, undefined, cadena vacía, etc.
+    const imagenFinal = (imagen && imagen.trim() !== '') ? imagen : '/images/logprincipal.jpg';
 
     // Construir inserción dinámica
     const campos = [
