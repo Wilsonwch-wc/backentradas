@@ -168,6 +168,10 @@ export const crearEvento = async (req, res) => {
     const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
 
+    // Usar una imagen por defecto si no se envía ninguna
+    // Esto evita errores cuando el frontend no envía el campo imagen
+    const imagenFinal = imagen || '/images/logprincipal.jpg';
+
     // Construir inserción dinámica
     const campos = [
       'imagen',
@@ -182,7 +186,7 @@ export const crearEvento = async (req, res) => {
     ];
     const placeholders = Array(campos.length).fill('?');
     const valores = [
-      imagen || null,
+      imagenFinal,
       titulo,
       descripcion,
       hora_inicio,
