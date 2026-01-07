@@ -317,6 +317,142 @@ export const enviarCodigoVerificacion = async (email, nombreCliente, codigo) => 
 };
 
 /**
+ * Envía un código de recuperación de contraseña por correo electrónico
+ * @param {string} email - Email del destinatario
+ * @param {string} nombreCliente - Nombre del cliente
+ * @param {string} codigo - Código de 4 dígitos
+ * @returns {Promise<Object>} - Resultado del envío
+ */
+export const enviarCodigoRecuperacion = async (email, nombreCliente, codigo) => {
+  try {
+    const transporter = crearTransporter();
+
+    if (!transporter) {
+      return {
+        success: false,
+        message: 'Servicio de correo no configurado. Por favor, configura las variables SMTP en el archivo .env'
+      };
+    }
+
+    // Crear el contenido del email
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+          }
+          .header {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+            border-radius: 8px 8px 0 0;
+          }
+          .content {
+            background-color: #f9fafb;
+            padding: 30px;
+            border-radius: 0 0 8px 8px;
+          }
+          .codigo-box {
+            background-color: white;
+            padding: 30px;
+            margin: 20px 0;
+            border-radius: 10px;
+            text-align: center;
+            border: 3px solid #ef4444;
+          }
+          .codigo {
+            font-size: 48px;
+            font-weight: 700;
+            color: #1a1a1a;
+            letter-spacing: 10px;
+            margin: 20px 0;
+            font-family: 'Courier New', monospace;
+          }
+          .info-box {
+            background-color: #fef2f2;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+            border-left: 4px solid #ef4444;
+          }
+          .footer {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+            font-size: 12px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>🔒 Recuperación de Contraseña</h1>
+        </div>
+        <div class="content">
+          <p>Hola <strong>${nombreCliente || 'Usuario'}</strong>,</p>
+          
+          <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta. Si no solicitaste esto, puedes ignorar este correo de forma segura.</p>
+          
+          <div class="codigo-box">
+            <p style="margin: 0 0 10px 0; color: #666; font-size: 14px;">Tu código de recuperación es:</p>
+            <div class="codigo">${codigo}</div>
+            <p style="margin: 10px 0 0 0; color: #666; font-size: 12px;">Este código expira en 15 minutos</p>
+          </div>
+          
+          <div class="info-box">
+            <p style="margin: 0;"><strong>⚠️ Importante:</strong></p>
+            <ul style="margin: 10px 0 0 20px; padding: 0;">
+              <li>Este código es válido por 15 minutos</li>
+              <li>No compartas este código con nadie</li>
+              <li>Si no solicitaste este cambio, ignora este correo</li>
+            </ul>
+          </div>
+        </div>
+        <div class="footer">
+          <p>PlusTicket - MAS FACIL IMPOSIBLE</p>
+          <p>Este es un correo automático, por favor no respondas.</p>
+        </div>
+      </body>
+      </html>
+    `;
+
+    // Configurar el correo
+    const mailOptions = {
+      from: `"PlusTicket" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: '🔒 Código de recuperación de contraseña - PlusTicket',
+      html: htmlContent
+    };
+
+    // Enviar el correo
+    const info = await transporter.sendMail(mailOptions);
+
+    return {
+      success: true,
+      message: 'Código de recuperación enviado exitosamente',
+      messageId: info.messageId,
+      email: email
+    };
+
+  } catch (error) {
+    console.error('❌ Error al enviar código de recuperación:', error);
+    return {
+      success: false,
+      message: error.message || 'Error al enviar el correo electrónico',
+      error: error.message
+    };
+  }
+};
+
+/**
  * Verifica si el servicio de email está configurado
  */
 export const verificarConfiguracionEmail = () => {

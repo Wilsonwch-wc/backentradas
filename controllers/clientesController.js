@@ -283,6 +283,29 @@ const generarCodigoVerificacion = () => {
   return Math.floor(1000 + Math.random() * 9000).toString();
 };
 
+// Separar nombre completo en nombre y apellido
+const separarNombreCompleto = (nombreCompleto) => {
+  if (!nombreCompleto || typeof nombreCompleto !== 'string') {
+    return { nombre: null, apellido: null };
+  }
+  
+  const partes = nombreCompleto.trim().split(/\s+/);
+  
+  if (partes.length === 0) {
+    return { nombre: null, apellido: null };
+  } else if (partes.length === 1) {
+    return { nombre: partes[0], apellido: null };
+  } else if (partes.length === 2) {
+    return { nombre: partes[0], apellido: partes[1] };
+  } else {
+    // Si hay más de 2 partes, tomar la primera como nombre y el resto como apellido
+    return {
+      nombre: partes[0],
+      apellido: partes.slice(1).join(' ')
+    };
+  }
+};
+
 // Registro local de cliente
 export const registrarCliente = async (req, res) => {
   try {
@@ -341,6 +364,34 @@ export const registrarCliente = async (req, res) => {
       });
     }
 
+    // Separar nombre completo si solo se proporciona nombre_completo
+    let nombreFinal = nombre;
+    let apellidoFinal = apellido;
+    let nombreCompletoFinal = nombre_completo;
+    
+    // Si se proporciona nombre_completo pero no nombre/apellido, separarlo
+    if (nombre_completo && !nombre && !apellido) {
+      const separado = separarNombreCompleto(nombre_completo);
+      nombreFinal = separado.nombre;
+      apellidoFinal = separado.apellido;
+      nombreCompletoFinal = nombre_completo;
+    } else if (nombre && apellido && !nombre_completo) {
+      // Si se proporcionan nombre y apellido, crear nombre_completo
+      nombreCompletoFinal = `${nombre} ${apellido}`;
+    } else if (nombre_completo && (nombre || apellido)) {
+      // Si se proporciona nombre_completo y también nombre/apellido, usar nombre_completo y separarlo
+      const separado = separarNombreCompleto(nombre_completo);
+      nombreFinal = nombre || separado.nombre;
+      apellidoFinal = apellido || separado.apellido;
+      nombreCompletoFinal = nombre_completo;
+    } else if (nombre && !apellido && !nombre_completo) {
+      // Solo nombre, usar como nombre_completo también
+      nombreCompletoFinal = nombre;
+    } else if (apellido && !nombre && !nombre_completo) {
+      // Solo apellido, usar como nombre_completo también
+      nombreCompletoFinal = apellido;
+    }
+
     // Generar código de verificación
     const codigo = generarCodigoVerificacion();
     const fechaExpiracion = new Date();
@@ -351,9 +402,9 @@ export const registrarCliente = async (req, res) => {
       `INSERT INTO clientes (nombre, apellido, nombre_completo, correo, password, telefono, provider, codigo_verificacion, codigo_verificacion_expira, email_verificado, activo)
        VALUES (?, ?, ?, ?, ?, ?, 'local', ?, ?, FALSE, FALSE)`,
       [
-        nombre || null,
-        apellido || null,
-        nombre_completo || (nombre && apellido ? `${nombre} ${apellido}` : nombre || apellido || null),
+        nombreFinal || null,
+        apellidoFinal || null,
+        nombreCompletoFinal || null,
         correo,
         password, // En producción esto debe estar hasheado
         telefono || null,
@@ -663,6 +714,181 @@ export const reenviarCodigoVerificacion = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al reenviar el código',
+      error: error.message
+    });
+  }
+};
+
+// Solicitar recuperación de contraseña
+export const solicitarRecuperacionPassword = async (req, res) => {
+  try {
+    const { correo } = req.body;
+
+    if (!correo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Correo es requerido'
+      });
+    }
+
+    // Buscar cliente
+    const [clientes] = await pool.execute(
+      'SELECT id, nombre_completo, nombre, apellido, provider, email_verificado FROM clientes WHERE correo = ?',
+      [correo]
+    );
+
+    if (clientes.length === 0) {
+      // Por seguridad, no revelar si el correo existe o no
+      return res.json({
+        success: true,
+        message: 'Si el correo existe, se ha enviado un código de recuperación'
+      });
+    }
+
+    const cliente = clientes[0];
+
+    // Solo permitir recuperación para usuarios locales con email verificado
+    if (cliente.provider !== 'local') {
+      return res.status(400).json({
+        success: false,
+        message: 'No se puede recuperar la contraseña de cuentas vinculadas con Google'
+      });
+    }
+
+    if (!cliente.email_verificado) {
+      return res.status(400).json({
+        success: false,
+        message: 'Por favor, verifica tu correo electrónico primero'
+      });
+    }
+
+    // Generar código de recuperación
+    const codigo = generarCodigoVerificacion();
+    const fechaExpiracion = new Date();
+    fechaExpiracion.setMinutes(fechaExpiracion.getMinutes() + 15); // 15 minutos
+
+    // Guardar código en la base de datos (usaremos el mismo campo codigo_verificacion pero con un prefijo o campo separado)
+    // Por simplicidad, usaremos codigo_verificacion y agregaremos un campo codigo_recuperacion_password si es necesario
+    // Por ahora, usaremos codigo_verificacion para recuperación también
+    await pool.execute(
+      `UPDATE clientes 
+       SET codigo_verificacion = ?, 
+           codigo_verificacion_expira = ?
+       WHERE id = ?`,
+      [codigo, fechaExpiracion, cliente.id]
+    );
+
+    // Enviar código por email
+    const { enviarCodigoRecuperacion } = await import('../services/emailService.js');
+    const nombreCliente = cliente.nombre_completo || cliente.nombre || cliente.apellido || 'Usuario';
+    const emailResult = await enviarCodigoRecuperacion(correo, nombreCliente, codigo);
+
+    if (!emailResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: 'Error al enviar el código de recuperación. Por favor, intenta nuevamente.',
+        error: emailResult.message
+      });
+    }
+
+    // Por seguridad, no revelar si el correo existe
+    res.json({
+      success: true,
+      message: 'Si el correo existe, se ha enviado un código de recuperación'
+    });
+
+  } catch (error) {
+    console.error('Error al solicitar recuperación:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al procesar la solicitud',
+      error: error.message
+    });
+  }
+};
+
+// Restablecer contraseña con código
+export const restablecerPassword = async (req, res) => {
+  try {
+    const { correo, codigo, nuevaPassword } = req.body;
+
+    if (!correo || !codigo || !nuevaPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Correo, código y nueva contraseña son requeridos'
+      });
+    }
+
+    if (nuevaPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'La contraseña debe tener al menos 6 caracteres'
+      });
+    }
+
+    // Buscar cliente
+    const [clientes] = await pool.execute(
+      'SELECT id, codigo_verificacion, codigo_verificacion_expira, provider, email_verificado FROM clientes WHERE correo = ?',
+      [correo]
+    );
+
+    if (clientes.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Correo no encontrado'
+      });
+    }
+
+    const cliente = clientes[0];
+
+    // Solo permitir para usuarios locales
+    if (cliente.provider !== 'local') {
+      return res.status(400).json({
+        success: false,
+        message: 'No se puede restablecer la contraseña de cuentas vinculadas con Google'
+      });
+    }
+
+    // Verificar código
+    if (!cliente.codigo_verificacion || cliente.codigo_verificacion !== codigo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Código de recuperación inválido'
+      });
+    }
+
+    // Verificar expiración
+    const ahora = new Date();
+    const fechaExpiracion = new Date(cliente.codigo_verificacion_expira);
+    
+    if (ahora > fechaExpiracion) {
+      return res.status(400).json({
+        success: false,
+        message: 'El código de recuperación ha expirado. Por favor, solicita uno nuevo.'
+      });
+    }
+
+    // Actualizar contraseña y limpiar código
+    await pool.execute(
+      `UPDATE clientes 
+       SET password = ?,
+           codigo_verificacion = NULL,
+           codigo_verificacion_expira = NULL,
+           updated_at = NOW()
+       WHERE id = ?`,
+      [nuevaPassword, cliente.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Contraseña restablecida exitosamente. Ahora puedes iniciar sesión.'
+    });
+
+  } catch (error) {
+    console.error('Error al restablecer contraseña:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al restablecer la contraseña',
       error: error.message
     });
   }
