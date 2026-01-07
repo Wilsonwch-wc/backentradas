@@ -8,7 +8,9 @@ import {
   actualizarCliente,
   obtenerClientes,
   actualizarClienteAdmin,
-  eliminarCliente
+  eliminarCliente,
+  verificarCodigoEmail,
+  reenviarCodigoVerificacion
 } from '../controllers/clientesController.js';
 
 const router = express.Router();
@@ -17,6 +19,8 @@ const router = express.Router();
 router.post('/google', loginConGoogle);
 router.post('/registro', registrarCliente);
 router.post('/login', loginCliente);
+router.post('/verificar-codigo', verificarCodigoEmail);
+router.post('/reenviar-codigo', reenviarCodigoVerificacion);
 
 // Rutas protegidas (cliente autenticado)
 router.get('/verify', verifyToken, verifyCliente);

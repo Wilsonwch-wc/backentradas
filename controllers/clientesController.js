@@ -278,6 +278,11 @@ export const loginConGoogle = async (req, res) => {
   }
 };
 
+// Generar código de verificación de 4 dígitos
+const generarCodigoVerificacion = () => {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+};
+
 // Registro local de cliente
 export const registrarCliente = async (req, res) => {
   try {
@@ -293,58 +298,87 @@ export const registrarCliente = async (req, res) => {
 
     // Verificar si el correo ya existe
     const [clientesExistentes] = await pool.execute(
-      'SELECT id FROM clientes WHERE correo = ?',
+      'SELECT id, email_verificado FROM clientes WHERE correo = ?',
       [correo]
     );
 
     if (clientesExistentes.length > 0) {
+      const clienteExistente = clientesExistentes[0];
+      // Si el correo existe pero no está verificado, permitir reenviar código
+      if (!clienteExistente.email_verificado) {
+        // Generar nuevo código y actualizar
+        const codigo = generarCodigoVerificacion();
+        const fechaExpiracion = new Date();
+        fechaExpiracion.setMinutes(fechaExpiracion.getMinutes() + 15); // 15 minutos
+
+        await pool.execute(
+          `UPDATE clientes 
+           SET codigo_verificacion = ?, 
+               codigo_verificacion_expira = ?,
+               password = ?
+           WHERE id = ?`,
+          [codigo, fechaExpiracion, password, clienteExistente.id]
+        );
+
+        // Enviar código por email
+        const { enviarCodigoVerificacion } = await import('../services/emailService.js');
+        const nombre = nombre_completo || nombre || apellido || 'Usuario';
+        await enviarCodigoVerificacion(correo, nombre, codigo);
+
+        return res.status(200).json({
+          success: true,
+          message: 'Código de verificación reenviado. Por favor, verifica tu correo electrónico.',
+          data: {
+            requiereVerificacion: true,
+            correo: correo
+          }
+        });
+      }
+      
       return res.status(400).json({
         success: false,
-        message: 'El correo ya está registrado'
+        message: 'El correo ya está registrado y verificado'
       });
     }
 
-    // Crear nuevo cliente
+    // Generar código de verificación
+    const codigo = generarCodigoVerificacion();
+    const fechaExpiracion = new Date();
+    fechaExpiracion.setMinutes(fechaExpiracion.getMinutes() + 15); // 15 minutos
+
+    // Crear nuevo cliente (sin verificar)
     const [result] = await pool.execute(
-      `INSERT INTO clientes (nombre, apellido, nombre_completo, correo, password, telefono, provider)
-       VALUES (?, ?, ?, ?, ?, ?, 'local')`,
+      `INSERT INTO clientes (nombre, apellido, nombre_completo, correo, password, telefono, provider, codigo_verificacion, codigo_verificacion_expira, email_verificado, activo)
+       VALUES (?, ?, ?, ?, ?, ?, 'local', ?, ?, FALSE, FALSE)`,
       [
         nombre || null,
         apellido || null,
         nombre_completo || (nombre && apellido ? `${nombre} ${apellido}` : nombre || apellido || null),
         correo,
         password, // En producción esto debe estar hasheado
-        telefono || null
+        telefono || null,
+        codigo,
+        fechaExpiracion
       ]
     );
 
-    // Obtener cliente creado
-    const [clientes] = await pool.execute(
-      'SELECT id, nombre, apellido, nombre_completo, correo, telefono, foto_perfil, provider FROM clientes WHERE id = ?',
-      [result.insertId]
-    );
+    // Enviar código por email
+    const { enviarCodigoVerificacion } = await import('../services/emailService.js');
+    const nombreCliente = nombre_completo || nombre || apellido || 'Usuario';
+    const emailResult = await enviarCodigoVerificacion(correo, nombreCliente, codigo);
 
-    const cliente = clientes[0];
-
-    // Generar token JWT
-    const token = jwt.sign(
-      {
-        id: cliente.id,
-        correo: cliente.correo,
-        nombre: cliente.nombre_completo || cliente.nombre,
-        provider: cliente.provider,
-        tipo: 'cliente'
-      },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    );
+    if (!emailResult.success) {
+      console.error('Error al enviar código de verificación:', emailResult.message);
+      // Aún así, devolver éxito pero indicar que requiere verificación
+    }
 
     res.status(201).json({
       success: true,
-      message: 'Cliente registrado exitosamente',
+      message: 'Registro exitoso. Por favor, verifica tu correo electrónico con el código enviado.',
       data: {
-        token,
-        user: cliente
+        requiereVerificacion: true,
+        correo: correo,
+        emailEnviado: emailResult.success
       }
     });
 
@@ -384,6 +418,16 @@ export const loginCliente = async (req, res) => {
     }
 
     const cliente = clientes[0];
+
+    // Verificar si el email está verificado
+    if (!cliente.email_verificado) {
+      return res.status(403).json({
+        success: false,
+        message: 'Por favor, verifica tu correo electrónico antes de iniciar sesión. Revisa tu bandeja de entrada.',
+        requiereVerificacion: true,
+        correo: correo
+      });
+    }
 
     // Verificar si está activo
     if (!cliente.activo) {
@@ -437,6 +481,188 @@ export const loginCliente = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al iniciar sesión',
+      error: error.message
+    });
+  }
+};
+
+// Verificar código de verificación de email
+export const verificarCodigoEmail = async (req, res) => {
+  try {
+    const { correo, codigo } = req.body;
+
+    if (!correo || !codigo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Correo y código son requeridos'
+      });
+    }
+
+    // Buscar cliente por correo
+    const [clientes] = await pool.execute(
+      'SELECT id, codigo_verificacion, codigo_verificacion_expira, email_verificado, nombre_completo, nombre, apellido FROM clientes WHERE correo = ?',
+      [correo]
+    );
+
+    if (clientes.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Correo no encontrado'
+      });
+    }
+
+    const cliente = clientes[0];
+
+    // Verificar si ya está verificado
+    if (cliente.email_verificado) {
+      return res.status(400).json({
+        success: false,
+        message: 'Este correo ya está verificado'
+      });
+    }
+
+    // Verificar código
+    if (!cliente.codigo_verificacion || cliente.codigo_verificacion !== codigo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Código de verificación inválido'
+      });
+    }
+
+    // Verificar expiración
+    const ahora = new Date();
+    const fechaExpiracion = new Date(cliente.codigo_verificacion_expira);
+    
+    if (ahora > fechaExpiracion) {
+      return res.status(400).json({
+        success: false,
+        message: 'El código de verificación ha expirado. Por favor, solicita uno nuevo.'
+      });
+    }
+
+    // Verificar y activar cuenta
+    await pool.execute(
+      `UPDATE clientes 
+       SET email_verificado = TRUE, 
+           activo = TRUE,
+           codigo_verificacion = NULL,
+           codigo_verificacion_expira = NULL
+       WHERE id = ?`,
+      [cliente.id]
+    );
+
+    // Obtener cliente actualizado
+    const [clientesActualizados] = await pool.execute(
+      'SELECT id, nombre, apellido, nombre_completo, correo, telefono, foto_perfil, provider FROM clientes WHERE id = ?',
+      [cliente.id]
+    );
+
+    const clienteActualizado = clientesActualizados[0];
+
+    // Generar token JWT
+    const token = jwt.sign(
+      {
+        id: clienteActualizado.id,
+        correo: clienteActualizado.correo,
+        nombre: clienteActualizado.nombre_completo || clienteActualizado.nombre,
+        provider: clienteActualizado.provider,
+        tipo: 'cliente'
+      },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    res.json({
+      success: true,
+      message: 'Correo verificado exitosamente',
+      data: {
+        token,
+        user: clienteActualizado
+      }
+    });
+
+  } catch (error) {
+    console.error('Error al verificar código:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al verificar el código',
+      error: error.message
+    });
+  }
+};
+
+// Reenviar código de verificación
+export const reenviarCodigoVerificacion = async (req, res) => {
+  try {
+    const { correo } = req.body;
+
+    if (!correo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Correo es requerido'
+      });
+    }
+
+    // Buscar cliente
+    const [clientes] = await pool.execute(
+      'SELECT id, nombre_completo, nombre, apellido, email_verificado FROM clientes WHERE correo = ?',
+      [correo]
+    );
+
+    if (clientes.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Correo no encontrado'
+      });
+    }
+
+    const cliente = clientes[0];
+
+    // Si ya está verificado, no permitir reenvío
+    if (cliente.email_verificado) {
+      return res.status(400).json({
+        success: false,
+        message: 'Este correo ya está verificado'
+      });
+    }
+
+    // Generar nuevo código
+    const codigo = generarCodigoVerificacion();
+    const fechaExpiracion = new Date();
+    fechaExpiracion.setMinutes(fechaExpiracion.getMinutes() + 15); // 15 minutos
+
+    // Actualizar código en la base de datos
+    await pool.execute(
+      `UPDATE clientes 
+       SET codigo_verificacion = ?, 
+           codigo_verificacion_expira = ?
+       WHERE id = ?`,
+      [codigo, fechaExpiracion, cliente.id]
+    );
+
+    // Enviar código por email
+    const { enviarCodigoVerificacion } = await import('../services/emailService.js');
+    const nombreCliente = cliente.nombre_completo || cliente.nombre || cliente.apellido || 'Usuario';
+    const emailResult = await enviarCodigoVerificacion(correo, nombreCliente, codigo);
+
+    if (!emailResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: 'Error al enviar el código de verificación. Por favor, intenta nuevamente.',
+        error: emailResult.message
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Código de verificación reenviado exitosamente'
+    });
+
+  } catch (error) {
+    console.error('Error al reenviar código:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al reenviar el código',
       error: error.message
     });
   }
