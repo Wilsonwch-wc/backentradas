@@ -5,7 +5,7 @@ const columnasEventoPublicQuery = `
   SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
   WHERE TABLE_SCHEMA = DATABASE() 
     AND TABLE_NAME = 'eventos' 
-    AND COLUMN_NAME IN ('forma_espacio', 'escenario_x', 'escenario_y', 'escenario_width', 'escenario_height', 'qr_pago_url')
+    AND COLUMN_NAME IN ('forma_espacio', 'escenario_x', 'escenario_y', 'escenario_width', 'escenario_height', 'qr_pago_url', 'estado')
 `;
 
 // Obtener todos los eventos (público - sin autenticación)
@@ -15,11 +15,22 @@ export const obtenerEventosPublicos = async (req, res) => {
     const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
 
+    const tieneEstado = columnasExistentes.includes('estado');
+    
     let query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, created_at, updated_at`;
     if (tieneQrPago) {
       query += `, qr_pago_url`;
     }
-    query += ` FROM eventos ORDER BY hora_inicio DESC`;
+    if (tieneEstado) {
+      query += `, estado`;
+    }
+    // Filtrar eventos pasados: solo mostrar eventos con hora_inicio >= NOW() o estado != 'finalizado'
+    // Si no existe el campo estado, usar solo la fecha
+    if (tieneEstado) {
+      query += ` FROM eventos WHERE (estado != 'finalizado' OR estado IS NULL) AND hora_inicio >= NOW() ORDER BY hora_inicio ASC`;
+    } else {
+      query += ` FROM eventos WHERE hora_inicio >= NOW() ORDER BY hora_inicio ASC`;
+    }
 
     const [eventos] = await pool.execute(query);
 
@@ -67,6 +78,8 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
     const tieneFormaEspacio = columnasExistentes.includes('forma_espacio');
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
     
+    const tieneEstado = columnasExistentes.includes('estado');
+    
     let query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, created_at, updated_at`;
     
     if (tieneFormaEspacio) {
@@ -74,6 +87,9 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
     }
     if (tieneQrPago) {
       query += `, qr_pago_url`;
+    }
+    if (tieneEstado) {
+      query += `, estado`;
     }
     
     // Si es numérico, buscar por ID. Si no, buscar por título convertido a slug

@@ -8,7 +8,7 @@ const columnasEventoQuery = `
     AND COLUMN_NAME IN (
       'forma_espacio', 'escenario_x', 'escenario_y',
       'escenario_width', 'escenario_height',
-      'layout_bloqueado', 'qr_pago_url'
+      'layout_bloqueado', 'qr_pago_url', 'estado'
     )
 `;
 
@@ -22,6 +22,7 @@ export const obtenerEventos = async (req, res) => {
     const tieneFormaEspacio = columnasExistentes.includes('forma_espacio');
     const tieneLayoutBloqueado = columnasExistentes.includes('layout_bloqueado');
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
+    const tieneEstado = columnasExistentes.includes('estado');
     
     let query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, created_at, updated_at`;
     
@@ -34,6 +35,9 @@ export const obtenerEventos = async (req, res) => {
     }
     if (tieneQrPago) {
       query += `, qr_pago_url`;
+    }
+    if (tieneEstado) {
+      query += `, estado`;
     }
     
     query += ` FROM eventos ORDER BY hora_inicio DESC`;
@@ -66,6 +70,7 @@ export const obtenerEventoPorId = async (req, res) => {
     const tieneFormaEspacio = columnasExistentes.includes('forma_espacio');
     const tieneLayoutBloqueado = columnasExistentes.includes('layout_bloqueado');
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
+    const tieneEstado = columnasExistentes.includes('estado');
     
     let query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, created_at, updated_at`;
     
@@ -78,6 +83,9 @@ export const obtenerEventoPorId = async (req, res) => {
     }
     if (tieneQrPago) {
       query += `, qr_pago_url`;
+    }
+    if (tieneEstado) {
+      query += `, estado`;
     }
     
     query += ` FROM eventos WHERE id = ?`;
@@ -108,7 +116,7 @@ export const obtenerEventoPorId = async (req, res) => {
 // Crear un nuevo evento
 export const crearEvento = async (req, res) => {
   try {
-    const { imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, qr_pago_url } = req.body;
+    const { imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, qr_pago_url, estado } = req.body;
 
     // Validaciones básicas
     if (!titulo || !descripcion || !hora_inicio) {
@@ -167,6 +175,11 @@ export const crearEvento = async (req, res) => {
     const [columnas] = await pool.execute(columnasEventoQuery);
     const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
+    const tieneEstado = columnasExistentes.includes('estado');
+    
+    // Validar estado si se proporciona
+    const estadosValidos = ['activo', 'proximamente', 'finalizado'];
+    const estadoFinal = estado && estadosValidos.includes(estado) ? estado : 'activo';
 
     // Usar una imagen por defecto si no se envía ninguna
     // Esto evita errores cuando el frontend no envía el campo imagen
@@ -207,6 +220,12 @@ export const crearEvento = async (req, res) => {
       placeholders.push('?');
       valores.push(qr_pago_url || null);
     }
+    
+    if (tieneEstado) {
+      campos.push('estado');
+      placeholders.push('?');
+      valores.push(estadoFinal);
+    }
 
     const [result] = await pool.execute(
       `INSERT INTO eventos (${campos.join(', ')})
@@ -218,6 +237,9 @@ export const crearEvento = async (req, res) => {
     let querySelect = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, created_at, updated_at`;
     if (tieneQrPago) {
       querySelect += `, qr_pago_url`;
+    }
+    if (tieneEstado) {
+      querySelect += `, estado`;
     }
     querySelect += ` FROM eventos WHERE id = ?`;
 
@@ -243,7 +265,7 @@ export const actualizarEvento = async (req, res) => {
   try {
     const { id } = req.params;
     const { imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas,
-            forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, layout_bloqueado, qr_pago_url } = req.body;
+            forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, layout_bloqueado, qr_pago_url, estado } = req.body;
 
     // Verificar si el evento existe
     const [eventosExistentes] = await pool.execute(
@@ -355,10 +377,19 @@ export const actualizarEvento = async (req, res) => {
     const [columnas] = await pool.execute(columnasEventoQuery);
     const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
+    const tieneEstado = columnasExistentes.includes('estado');
 
     if (tieneQrPago && qr_pago_url !== undefined) {
       campos.push('qr_pago_url = ?');
       valores.push(qr_pago_url || null);
+    }
+    
+    if (tieneEstado && estado !== undefined) {
+      const estadosValidos = ['activo', 'proximamente', 'finalizado'];
+      if (estadosValidos.includes(estado)) {
+        campos.push('estado = ?');
+        valores.push(estado);
+      }
     }
 
     if (campos.length === 0) {
@@ -387,6 +418,9 @@ export const actualizarEvento = async (req, res) => {
     }
     if (tieneQrPago) {
       querySelect += `, qr_pago_url`;
+    }
+    if (tieneEstado) {
+      querySelect += `, estado`;
     }
     querySelect += ` FROM eventos WHERE id = ?`;
     
