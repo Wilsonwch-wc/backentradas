@@ -1,10 +1,4 @@
 import pool from '../config/db.js';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 async function ejecutarScript() {
   let connection;
@@ -14,37 +8,55 @@ async function ejecutarScript() {
     
     connection = await pool.getConnection();
     
-    // Leer el archivo SQL
-    const sqlPath = path.join(__dirname, 'agregar_campo_estado_eventos.sql');
-    const sql = fs.readFileSync(sqlPath, 'utf8');
+    // Verificar si la columna ya existe
+    const [columnas] = await connection.execute(`
+      SELECT COUNT(*) as existe
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = 'eventos' 
+        AND COLUMN_NAME = 'estado'
+    `);
     
-    // Ejecutar cada comando SQL separadamente
-    const comandos = sql.split(';').filter(cmd => cmd.trim().length > 0);
-    
-    for (const comando of comandos) {
-      const cmdLimpio = comando.trim();
-      if (cmdLimpio && !cmdLimpio.startsWith('--')) {
-        try {
-          await connection.execute(cmdLimpio);
-          console.log('✅ Comando ejecutado:', cmdLimpio.substring(0, 50) + '...');
-        } catch (error) {
-          // Si el error es que la columna ya existe, está bien
-          if (error.message.includes('Duplicate column') || error.message.includes('ya existe')) {
-            console.log('ℹ️  La columna estado ya existe, continuando...');
-          } else {
-            throw error;
-          }
-        }
-      }
+    if (columnas[0].existe > 0) {
+      console.log('ℹ️  La columna estado ya existe en la tabla eventos.');
+    } else {
+      console.log('➕ Agregando columna estado a la tabla eventos...');
+      await connection.execute(`
+        ALTER TABLE eventos 
+        ADD COLUMN estado VARCHAR(20) DEFAULT 'activo' AFTER tipo_evento
+      `);
+      console.log('✅ Columna estado agregada exitosamente.');
     }
     
+    // Actualizar eventos pasados a 'finalizado'
+    console.log('\n🔄 Actualizando eventos pasados a estado "finalizado"...');
+    const [resultFinalizados] = await connection.execute(`
+      UPDATE eventos 
+      SET estado = 'finalizado' 
+      WHERE hora_inicio < NOW() AND (estado IS NULL OR estado = 'activo')
+    `);
+    console.log(`✅ ${resultFinalizados.affectedRows} eventos pasados actualizados a "finalizado".`);
+    
+    // Actualizar eventos futuros a 'activo' si no tienen estado
+    console.log('\n🔄 Actualizando eventos futuros a estado "activo"...');
+    const [resultActivos] = await connection.execute(`
+      UPDATE eventos 
+      SET estado = 'activo' 
+      WHERE hora_inicio >= NOW() AND (estado IS NULL OR estado = '')
+    `);
+    console.log(`✅ ${resultActivos.affectedRows} eventos futuros actualizados a "activo".`);
+    
     console.log('\n✅ Script ejecutado exitosamente!');
-    console.log('📋 El campo estado ha sido agregado a la tabla eventos.');
+    console.log('📋 El campo estado ha sido agregado y configurado en la tabla eventos.');
     console.log('   Estados disponibles: activo, proximamente, finalizado');
     
   } catch (error) {
     console.error('❌ Error al ejecutar el script:', error);
-    process.exit(1);
+    if (error.code === 'ER_DUP_FIELDNAME') {
+      console.log('ℹ️  La columna estado ya existe, continuando con actualizaciones...');
+    } else {
+      process.exit(1);
+    }
   } finally {
     if (connection) {
       connection.release();
