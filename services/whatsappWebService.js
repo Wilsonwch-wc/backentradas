@@ -422,9 +422,11 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
 
     // Formatear número
     const numeroFormateado = formatearNumero(telefono);
+    console.log(`📱 Número formateado: ${telefono} -> ${numeroFormateado}`);
 
     // Leer el archivo PDF
     const pdfBuffer = fs.readFileSync(pdfPath);
+    console.log(`📄 PDF leído: ${path.basename(pdfPath)} (${(pdfBuffer.length / 1024).toFixed(2)} KB)`);
 
     // Crear MessageMedia para el PDF
     const media = new MessageMedia(
@@ -433,9 +435,29 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
       path.basename(pdfPath)
     );
 
+    // Verificar que el número está registrado en WhatsApp antes de enviar
+    try {
+      console.log(`🔍 Verificando si el número ${numeroFormateado} está registrado en WhatsApp...`);
+      const numeroExiste = await client.isRegisteredUser(numeroFormateado);
+      if (!numeroExiste) {
+        throw new Error(`El número ${telefono} no está registrado en WhatsApp`);
+      }
+      console.log(`✅ Número verificado: ${numeroFormateado} está registrado`);
+    } catch (checkError) {
+      console.error('❌ Error al verificar número:', checkError.message);
+      // Si el error es que no está registrado, lanzarlo
+      if (checkError.message.includes('no está registrado')) {
+        throw checkError;
+      }
+      // Si es otro error, continuar (puede ser un problema temporal)
+      console.warn('⚠️ No se pudo verificar el número, pero continuando con el envío...');
+    }
+
     // Enviar el PDF con el mensaje como caption
     // Agregar timeout para evitar que se quede colgado
+    console.log(`📤 Intentando enviar PDF a ${numeroFormateado}...`);
     let mensajeEnviado;
+    
     try {
       const sendPromise = client.sendMessage(numeroFormateado, media, { caption: mensaje });
       const timeoutPromise = new Promise((_, reject) => {
@@ -446,15 +468,20 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
       
       // Verificar que el mensaje realmente se envió (debe tener un ID)
       if (!mensajeEnviado || !mensajeEnviado.id) {
+        console.error('❌ El mensaje no tiene ID, no se envió correctamente');
         throw new Error('El PDF no se envió correctamente: no se recibió confirmación');
       }
       
+      console.log(`✅ PDF enviado exitosamente. ID del mensaje: ${mensajeEnviado.id}`);
       return {
         success: true,
         message: 'PDF enviado exitosamente por WhatsApp Web',
         telefono: telefono
       };
     } catch (sendError) {
+      console.error('❌ Error al enviar PDF:', sendError.message);
+      console.error('❌ Stack trace:', sendError.stack);
+      
       // Si el error es relacionado con markedUnread o sendSeen, verificar si el mensaje se envió
       if (sendError.message?.includes('markedUnread') || 
           sendError.message?.includes('sendSeen') ||
@@ -471,9 +498,15 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
         }
         // Si no hay mensajeEnviado, el error ocurrió antes del envío
         console.error('❌ Error al enviar PDF (error ocurrió antes del envío):', sendError.message);
-        throw new Error('Error al enviar el PDF. El error ocurrió durante el proceso de envío.');
+        console.error('❌ Detalles:', {
+          mensajeEnviado: mensajeEnviado ? 'existe pero sin ID' : 'no existe',
+          numeroFormateado: numeroFormateado,
+          error: sendError.message
+        });
+        
+        throw new Error(`Error al enviar el PDF. ${sendError.message}. Por favor, verifica que WhatsApp Web esté conectado correctamente. Si el problema persiste, intenta reiniciar la sesión de WhatsApp Web.`);
       }
-      // Si es otro tipo de error, relanzarlo
+      // Si es otro tipo de error, relanzarlo con más información
       throw sendError;
     }
 
