@@ -308,7 +308,6 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
     const numeroFormateado = formatearNumero(telefono);
 
     // Enviar el mensaje con timeout
-    // Usar try-catch adicional para manejar errores internos de la biblioteca
     let mensajeEnviado;
     try {
       const sendPromise = client.sendMessage(numeroFormateado, mensaje);
@@ -317,30 +316,39 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
       });
 
       mensajeEnviado = await Promise.race([sendPromise, timeoutPromise]);
+      
+      // Verificar que el mensaje realmente se envió (debe tener un ID)
+      if (!mensajeEnviado || !mensajeEnviado.id) {
+        throw new Error('El mensaje no se envió correctamente: no se recibió confirmación');
+      }
+      
+      return {
+        success: true,
+        message: 'Mensaje enviado exitosamente por WhatsApp Web',
+        telefono: telefono
+      };
     } catch (sendError) {
-      // Si el error es relacionado con markedUnread o sendSeen, ignorarlo si el mensaje se envió
+      // Si el error es relacionado con markedUnread o sendSeen, verificar si el mensaje se envió
       if (sendError.message?.includes('markedUnread') || 
           sendError.message?.includes('sendSeen') ||
           sendError.message?.includes('Evaluation failed')) {
-        console.warn('⚠️ Advertencia al marcar mensaje como visto (puede ignorarse):', sendError.message);
-        // El mensaje probablemente se envió correctamente, solo falló al marcarlo como visto
-        // Intentar verificar si el mensaje se envió realmente
-        return {
-          success: true,
-          message: 'Mensaje enviado exitosamente (advertencia menor al marcar como visto)',
-          telefono: telefono,
-          warning: 'El mensaje se envió pero hubo un problema menor al marcarlo como visto'
-        };
+        // Si tenemos un mensajeEnviado con ID, significa que se envió antes del error
+        if (mensajeEnviado && mensajeEnviado.id) {
+          console.warn('⚠️ Advertencia al marcar mensaje como visto (mensaje enviado correctamente):', sendError.message);
+          return {
+            success: true,
+            message: 'Mensaje enviado exitosamente por WhatsApp Web',
+            telefono: telefono,
+            warning: 'El mensaje se envió pero hubo un problema menor al marcarlo como visto'
+          };
+        }
+        // Si no hay mensajeEnviado, el error ocurrió antes del envío
+        console.error('❌ Error al enviar mensaje (error ocurrió antes del envío):', sendError.message);
+        throw new Error('Error al enviar el mensaje. El error ocurrió durante el proceso de envío.');
       }
       // Si es otro tipo de error, relanzarlo
       throw sendError;
     }
-
-    return {
-      success: true,
-      message: 'Mensaje enviado exitosamente por WhatsApp Web',
-      telefono: telefono
-    };
 
   } catch (error) {
     console.error('❌ Error al enviar mensaje por WhatsApp Web:', error);
@@ -427,7 +435,6 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
 
     // Enviar el PDF con el mensaje como caption
     // Agregar timeout para evitar que se quede colgado
-    // Usar try-catch adicional para manejar errores internos de la biblioteca
     let mensajeEnviado;
     try {
       const sendPromise = client.sendMessage(numeroFormateado, media, { caption: mensaje });
@@ -436,30 +443,39 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
       });
 
       mensajeEnviado = await Promise.race([sendPromise, timeoutPromise]);
+      
+      // Verificar que el mensaje realmente se envió (debe tener un ID)
+      if (!mensajeEnviado || !mensajeEnviado.id) {
+        throw new Error('El PDF no se envió correctamente: no se recibió confirmación');
+      }
+      
+      return {
+        success: true,
+        message: 'PDF enviado exitosamente por WhatsApp Web',
+        telefono: telefono
+      };
     } catch (sendError) {
-      // Si el error es relacionado con markedUnread o sendSeen, ignorarlo si el mensaje se envió
+      // Si el error es relacionado con markedUnread o sendSeen, verificar si el mensaje se envió
       if (sendError.message?.includes('markedUnread') || 
           sendError.message?.includes('sendSeen') ||
           sendError.message?.includes('Evaluation failed')) {
-        console.warn('⚠️ Advertencia al marcar mensaje como visto (puede ignorarse):', sendError.message);
-        // El mensaje probablemente se envió correctamente, solo falló al marcarlo como visto
-        // Intentar verificar si el mensaje se envió realmente
-        return {
-          success: true,
-          message: 'PDF enviado exitosamente (advertencia menor al marcar como visto)',
-          telefono: telefono,
-          warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
-        };
+        // Si tenemos un mensajeEnviado con ID, significa que se envió antes del error
+        if (mensajeEnviado && mensajeEnviado.id) {
+          console.warn('⚠️ Advertencia al marcar mensaje como visto (PDF enviado correctamente):', sendError.message);
+          return {
+            success: true,
+            message: 'PDF enviado exitosamente por WhatsApp Web',
+            telefono: telefono,
+            warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
+          };
+        }
+        // Si no hay mensajeEnviado, el error ocurrió antes del envío
+        console.error('❌ Error al enviar PDF (error ocurrió antes del envío):', sendError.message);
+        throw new Error('Error al enviar el PDF. El error ocurrió durante el proceso de envío.');
       }
       // Si es otro tipo de error, relanzarlo
       throw sendError;
     }
-
-    return {
-      success: true,
-      message: 'PDF enviado exitosamente por WhatsApp Web',
-      telefono: telefono
-    };
 
   } catch (error) {
     console.error('❌ Error al enviar PDF por WhatsApp Web:', error);
