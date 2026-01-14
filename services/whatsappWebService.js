@@ -435,21 +435,26 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
       path.basename(pdfPath)
     );
 
-    // Verificar que el número está registrado en WhatsApp antes de enviar
+    // Verificar que el número está registrado en WhatsApp antes de enviar (opcional)
+    // Nota: isRegisteredUser puede no estar disponible en todas las versiones
     try {
-      console.log(`🔍 Verificando si el número ${numeroFormateado} está registrado en WhatsApp...`);
-      const numeroExiste = await client.isRegisteredUser(numeroFormateado);
-      if (!numeroExiste) {
-        throw new Error(`El número ${telefono} no está registrado en WhatsApp`);
+      if (client.isRegisteredUser && typeof client.isRegisteredUser === 'function') {
+        console.log(`🔍 Verificando si el número ${numeroFormateado} está registrado en WhatsApp...`);
+        const numeroExiste = await client.isRegisteredUser(numeroFormateado);
+        if (!numeroExiste) {
+          throw new Error(`El número ${telefono} no está registrado en WhatsApp`);
+        }
+        console.log(`✅ Número verificado: ${numeroFormateado} está registrado`);
+      } else {
+        console.log('⚠️ isRegisteredUser no está disponible, omitiendo verificación');
       }
-      console.log(`✅ Número verificado: ${numeroFormateado} está registrado`);
     } catch (checkError) {
       console.error('❌ Error al verificar número:', checkError.message);
       // Si el error es que no está registrado, lanzarlo
       if (checkError.message.includes('no está registrado')) {
         throw checkError;
       }
-      // Si es otro error, continuar (puede ser un problema temporal)
+      // Si es otro error (método no disponible, etc.), continuar con el envío
       console.warn('⚠️ No se pudo verificar el número, pero continuando con el envío...');
     }
 

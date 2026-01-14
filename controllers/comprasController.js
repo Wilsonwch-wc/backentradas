@@ -2328,6 +2328,7 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
         telefono: compra.cliente_telefono
       });
     } else {
+      console.error('❌ Error al enviar PDF (desde servicio):', resultado.message, resultado.error);
       res.status(500).json({
         success: false,
         message: resultado.message || 'Error al enviar el PDF',
@@ -2336,10 +2337,11 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Error al enviar PDF por WhatsApp Web:', error);
+    console.error('❌ Error al enviar PDF por WhatsApp Web:', error);
+    console.error('❌ Stack trace completo:', error.stack);
     res.status(500).json({
       success: false,
-      message: 'Error al enviar el PDF por WhatsApp Web',
+      message: error.message || 'Error al enviar el PDF por WhatsApp Web',
       error: error.message
     });
   }
