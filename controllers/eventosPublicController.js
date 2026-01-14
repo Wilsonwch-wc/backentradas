@@ -24,10 +24,12 @@ export const obtenerEventosPublicos = async (req, res) => {
     if (tieneEstado) {
       query += `, estado`;
     }
-    // Filtrar eventos pasados: solo mostrar eventos con hora_inicio >= NOW() o estado != 'finalizado'
+    // Filtrar eventos: solo mostrar eventos activos o próximamente, que no estén finalizados u ocultos
     // Si no existe el campo estado, usar solo la fecha
     if (tieneEstado) {
-      query += ` FROM eventos WHERE (estado != 'finalizado' OR estado IS NULL) AND hora_inicio >= NOW() ORDER BY hora_inicio ASC`;
+      // Mostrar solo eventos con estado 'activo' o 'proximamente'
+      // También incluir eventos con estado NULL (eventos antiguos sin estado definido) para compatibilidad
+      query += ` FROM eventos WHERE (estado IN ('activo', 'proximamente') OR estado IS NULL) AND hora_inicio >= NOW() ORDER BY hora_inicio ASC`;
     } else {
       query += ` FROM eventos WHERE hora_inicio >= NOW() ORDER BY hora_inicio ASC`;
     }
@@ -96,14 +98,20 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
     const isNumeric = /^\d+$/.test(id);
     let eventos = [];
     
+    // Agregar filtro de estado si existe
+    let filtroEstado = '';
+    if (tieneEstado) {
+      filtroEstado = ` AND (estado IN ('activo', 'proximamente') OR estado IS NULL)`;
+    }
+    
     if (isNumeric) {
       // Búsqueda por ID (compatibilidad con URLs antiguas)
-      query += ` FROM eventos WHERE id = ?`;
+      query += ` FROM eventos WHERE id = ?${filtroEstado}`;
       [eventos] = await pool.execute(query, [id]);
     } else {
       // Búsqueda por slug: obtener todos los eventos y comparar slugs generados
       // Esto es necesario porque MySQL no puede hacer coincidencia exacta de slugs generados dinámicamente
-      query += ` FROM eventos`;
+      query += ` FROM eventos WHERE 1=1${filtroEstado}`;
       const [todosEventos] = await pool.execute(query);
       
       // Buscar el evento cuyo slug generado coincida
@@ -123,7 +131,10 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
           if (tieneQrPago) {
             query += `, qr_pago_url`;
           }
-          query += ` FROM eventos WHERE id = ?`;
+          if (tieneEstado) {
+            query += `, estado`;
+          }
+          query += ` FROM eventos WHERE id = ?${filtroEstado}`;
           const [eventosPorId] = await pool.execute(query, [numId]);
           if (eventosPorId.length > 0) {
             eventos = eventosPorId;
