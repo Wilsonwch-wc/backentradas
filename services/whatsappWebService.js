@@ -112,7 +112,9 @@ export const inicializarWhatsAppWeb = () => {
     // Deshabilitar funcionalidades que pueden causar errores
     markOnlineOnConnect: false,
     // Evitar errores con mensajes no leídos
-    disableAutoRead: true
+    disableAutoRead: true,
+    // Deshabilitar el marcado automático de mensajes como vistos
+    markReadOnConnect: false
   });
 
   client.on('qr', async (qr) => {
@@ -501,15 +503,34 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
             warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
           };
         }
-        // Si no hay mensajeEnviado, el error ocurrió antes del envío
-        console.error('❌ Error al enviar PDF (error ocurrió antes del envío):', sendError.message);
-        console.error('❌ Detalles:', {
-          mensajeEnviado: mensajeEnviado ? 'existe pero sin ID' : 'no existe',
-          numeroFormateado: numeroFormateado,
-          error: sendError.message
-        });
+        // Si no hay mensajeEnviado, verificar si se envió consultando el chat
+        console.log('🔍 Verificando si el mensaje se envió realmente consultando el chat...');
+        try {
+          const chat = await client.getChatById(numeroFormateado);
+          // Esperar un momento para que el mensaje aparezca
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          const messages = await chat.fetchMessages({ limit: 10 });
+          // Buscar el último mensaje enviado por nosotros que tenga media (PDF)
+          const ultimoMensaje = messages.find(m => m.fromMe && m.hasMedia);
+          
+          if (ultimoMensaje && ultimoMensaje.id) {
+            console.log(`✅ Mensaje encontrado en el chat! ID: ${ultimoMensaje.id}`);
+            return {
+              success: true,
+              message: 'PDF enviado exitosamente por WhatsApp Web',
+              telefono: telefono,
+              warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
+            };
+          } else {
+            console.error('❌ No se encontró el mensaje en el chat después del error');
+          }
+        } catch (verifyError) {
+          console.error('❌ Error al verificar mensaje en el chat:', verifyError.message);
+        }
         
-        throw new Error(`Error al enviar el PDF. ${sendError.message}. Por favor, verifica que WhatsApp Web esté conectado correctamente. Si el problema persiste, intenta reiniciar la sesión de WhatsApp Web.`);
+        // Si no se encontró el mensaje, el error ocurrió antes del envío
+        console.error('❌ Error al enviar PDF (error ocurrió antes del envío):', sendError.message);
+        throw new Error(`Error al enviar el PDF. El error ocurrió durante el proceso de envío. Por favor, intenta reiniciar la sesión de WhatsApp Web.`);
       }
       // Si es otro tipo de error, relanzarlo con más información
       throw sendError;
