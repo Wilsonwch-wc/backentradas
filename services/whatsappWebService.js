@@ -627,6 +627,51 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
     let errorOcurrido = null;
     
     try {
+      // DESHABILITAR sendSeen COMPLETAMENTE antes de enviar usando múltiples métodos
+      console.log(`🔧 Deshabilitando sendSeen antes del envío...`);
+      try {
+        const page = await client.pupPage();
+        if (page) {
+          await page.evaluate(() => {
+            // Método 1: Sobrescribir en WWebJS
+            if (window.WWebJS) {
+              window.WWebJS.sendSeen = function() {
+                return Promise.resolve();
+              };
+            }
+            
+            // Método 2: Sobrescribir en Store si existe
+            if (window.Store) {
+              if (window.Store.Msg && window.Store.Msg.sendSeen) {
+                window.Store.Msg.sendSeen = function() {
+                  return Promise.resolve();
+                };
+              }
+              if (window.Store.sendSeen) {
+                window.Store.sendSeen = function() {
+                  return Promise.resolve();
+                };
+              }
+            }
+            
+            // Método 3: Interceptar todas las llamadas a sendSeen
+            const originalSendSeen = window.WWebJS?.sendSeen;
+            if (originalSendSeen) {
+              Object.defineProperty(window.WWebJS, 'sendSeen', {
+                value: function() {
+                  return Promise.resolve();
+                },
+                writable: false,
+                configurable: false
+              });
+            }
+          });
+          console.log(`✅ sendSeen deshabilitado antes del envío`);
+        }
+      } catch (pageErr) {
+        console.warn(`⚠️ No se pudo deshabilitar sendSeen: ${pageErr.message}`);
+      }
+      
       // Intentar enviar el PDF directamente
       console.log(`⏳ Enviando PDF a ${numeroFormateado}...`);
       console.log(`📄 Media info: mimetype=${media.mimetype}, filename=${media.filename}`);
@@ -637,52 +682,136 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
       
       // Crear un listener temporal para detectar mensajes enviados
       const messageListener = (message) => {
-        if (message.from === numeroFormateado || message.to === numeroFormateado) {
-          if (message.hasMedia && (message.type === 'document' || message.type === 'ptt')) {
-            const mensajeTimestamp = message.timestamp ? message.timestamp * 1000 : 0;
-            if (mensajeTimestamp >= timestampAntesEnvio - 60000) { // 1 minuto de margen
-              console.log(`✅ Mensaje detectado por evento! ID: ${message.id._serialized}`);
-              mensajeEnviadoDetectado = true;
-              mensajeEnviadoId = message.id._serialized;
+        try {
+          const messageFrom = message.from || message.id?.remote || '';
+          const messageTo = message.to || '';
+          const messageId = message.id?._serialized || message.id?.id || '';
+          
+          if (messageFrom.includes(numeroFormateado.replace('@c.us', '')) || 
+              messageTo.includes(numeroFormateado.replace('@c.us', ''))) {
+            if (message.hasMedia && (message.type === 'document' || message.type === 'ptt')) {
+              const mensajeTimestamp = message.timestamp ? message.timestamp * 1000 : 0;
+              if (mensajeTimestamp >= timestampAntesEnvio - 60000) {
+                console.log(`✅ Mensaje detectado por evento! ID: ${messageId}, Tipo: ${message.type}`);
+                mensajeEnviadoDetectado = true;
+                mensajeEnviadoId = messageId;
+              }
             }
           }
+        } catch (err) {
+          // Ignorar errores en el listener
         }
       };
       
       // Agregar el listener
       client.on('message_create', messageListener);
+      client.on('message', messageListener);
+      
+      // Intentar enviar usando la API interna de WhatsApp directamente
+      console.log(`📤 Intentando enviar usando API interna de WhatsApp...`);
+      let mensajeEnviadoConAPIInterna = false;
       
       try {
-        // Intentar enviar el mensaje
-        console.log(`📤 Iniciando envío...`);
-        const resultado = await client.sendMessage(numeroFormateado, media, { caption: captionParaPDF });
-        
-        // Si tenemos resultado, el mensaje se envió
-        if (resultado && resultado.id) {
-          const mensajeId = resultado.id?._serialized || resultado.id?.id || (typeof resultado.id === 'string' ? resultado.id : JSON.stringify(resultado.id)) || 'ID disponible';
-          console.log(`✅ PDF enviado exitosamente. ID: ${mensajeId}`);
-          client.removeListener('message_create', messageListener);
-          return {
-            success: true,
-            message: 'PDF enviado exitosamente por WhatsApp Web',
-            telefono: telefono
-          };
+        const page = await client.pupPage();
+        if (page) {
+          try {
+            const resultadoAPI = await page.evaluate(async (numero, pdfBase64, pdfMimeType, pdfFileName, caption) => {
+              try {
+                // Obtener el chat
+                const chat = await window.Store.Chat.find({ id: numero });
+                if (!chat) {
+                  throw new Error('Chat no encontrado');
+                }
+                
+                // Convertir base64 a Blob
+                const byteCharacters = atob(pdfBase64);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                  byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: pdfMimeType });
+                
+                // Procesar el media
+                const mediaObject = await window.Store.MediaObject.processMedia(blob, {
+                  asDocument: true,
+                  mimetype: pdfMimeType
+                });
+                
+                // Enviar el mensaje sin marcar como visto
+                const mensaje = await chat.sendMessage(mediaObject, {
+                  caption: caption,
+                  sendMediaAsDocument: true
+                });
+                
+                return { success: true, messageId: mensaje.id._serialized };
+              } catch (err) {
+                return { success: false, error: err.message };
+              }
+            }, numeroFormateado, media.data, media.mimetype, media.filename, captionParaPDF);
+            
+            if (resultadoAPI && resultadoAPI.success) {
+              console.log(`✅ PDF enviado exitosamente usando API interna! ID: ${resultadoAPI.messageId}`);
+              mensajeEnviadoConAPIInterna = true;
+              client.removeListener('message_create', messageListener);
+              client.removeListener('message', messageListener);
+              return {
+                success: true,
+                message: 'PDF enviado exitosamente por WhatsApp Web',
+                telefono: telefono
+              };
+            } else {
+              console.warn(`⚠️ API interna falló: ${resultadoAPI?.error || 'Error desconocido'}`);
+            }
+          } catch (apiErr) {
+            console.warn(`⚠️ Error al usar API interna: ${apiErr.message}`);
+          }
         }
-      } catch (sendErr) {
+      } catch (pageErr) {
+        console.warn(`⚠️ No se pudo acceder a pupPage: ${pageErr.message}`);
+      }
+      
+      // Si la API interna falló, intentar el método estándar
+      if (!mensajeEnviadoConAPIInterna) {
+        try {
+          // Intentar enviar el mensaje con un timeout más corto
+          console.log(`📤 Intentando método estándar...`);
+          const sendPromise = client.sendMessage(numeroFormateado, media, { caption: captionParaPDF });
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), 30000)
+          );
+          
+          const resultado = await Promise.race([sendPromise, timeoutPromise]);
+          
+          // Si tenemos resultado, el mensaje se envió
+          if (resultado && resultado.id) {
+            const mensajeId = resultado.id?._serialized || resultado.id?.id || (typeof resultado.id === 'string' ? resultado.id : JSON.stringify(resultado.id)) || 'ID disponible';
+            console.log(`✅ PDF enviado exitosamente. ID: ${mensajeId}`);
+            client.removeListener('message_create', messageListener);
+            client.removeListener('message', messageListener);
+            return {
+              success: true,
+              message: 'PDF enviado exitosamente por WhatsApp Web',
+              telefono: telefono
+            };
+          }
+        } catch (sendErr) {
         console.log(`⚠️ Error al enviar: ${sendErr.message}`);
         
         // Si el error es de markedUnread, esperar y verificar
         if (sendErr.message?.includes('markedUnread') || 
             sendErr.message?.includes('sendSeen') ||
-            sendErr.message?.includes('Evaluation failed')) {
-          console.log(`⚠️ Error de markedUnread. Esperando 20 segundos para detectar el mensaje...`);
+            sendErr.message?.includes('Evaluation failed') ||
+            sendErr.message?.includes('Timeout')) {
+          console.log(`⚠️ Error de markedUnread/Timeout. Esperando 30 segundos para detectar el mensaje...`);
           
-          // Esperar hasta 20 segundos para que el evento se dispare
-          for (let i = 0; i < 20; i++) {
+          // Esperar hasta 30 segundos para que el evento se dispare
+          for (let i = 0; i < 30; i++) {
             await new Promise(resolve => setTimeout(resolve, 1000));
             if (mensajeEnviadoDetectado) {
               console.log(`✅ Mensaje detectado por evento después de ${i + 1} segundos!`);
               client.removeListener('message_create', messageListener);
+              client.removeListener('message', messageListener);
               return {
                 success: true,
                 message: 'PDF enviado exitosamente por WhatsApp Web',
@@ -695,20 +824,23 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
           // Si no se detectó por evento, verificar en el chat
           console.log(`🔍 No se detectó por evento, verificando en el chat...`);
           client.removeListener('message_create', messageListener);
+          client.removeListener('message', messageListener);
           
           try {
             const chat = await client.getChatById(numeroFormateado);
-            const messages = await chat.fetchMessages({ limit: 30 });
+            const messages = await chat.fetchMessages({ limit: 50 });
             console.log(`📋 Total de mensajes en el chat: ${messages.length}`);
             
             // Buscar cualquier mensaje reciente con media
             const ultimoMensaje = messages.find(m => {
               const mensajeTimestamp = m.timestamp ? m.timestamp * 1000 : 0;
-              const esReciente = mensajeTimestamp >= timestampAntesEnvio - 300000; // 5 minutos de margen
+              const esReciente = mensajeTimestamp >= timestampAntesEnvio - 600000; // 10 minutos de margen
               const tieneMedia = m.hasMedia && (m.type === 'document' || m.type === 'ptt');
               const esMio = m.fromMe;
               
-              console.log(`🔍 Mensaje: fromMe=${esMio}, hasMedia=${m.hasMedia}, tipo=${m.type}, timestamp=${new Date(mensajeTimestamp).toISOString()}, esReciente=${esReciente}`);
+              if (esMio && tieneMedia) {
+                console.log(`🔍 Mensaje candidato: tipo=${m.type}, timestamp=${new Date(mensajeTimestamp).toISOString()}, esReciente=${esReciente}, diff=${mensajeTimestamp - timestampAntesEnvio}ms`);
+              }
               
               return esMio && tieneMedia && esReciente;
             });
@@ -723,7 +855,9 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
                 warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
               };
             } else {
-              console.error(`❌ No se encontró ningún mensaje reciente después de 20 segundos`);
+              console.error(`❌ No se encontró ningún mensaje reciente después de 30 segundos`);
+              console.error(`⏰ Timestamp de búsqueda: ${new Date(timestampAntesEnvio).toISOString()}`);
+              console.error(`⏰ Timestamp actual: ${new Date().toISOString()}`);
               throw new Error('El PDF no se envió. El error de markedUnread ocurrió antes del envío.');
             }
           } catch (checkError) {
@@ -733,12 +867,14 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
         } else {
           // Para otros errores, lanzar normalmente
           client.removeListener('message_create', messageListener);
+          client.removeListener('message', messageListener);
           throw sendErr;
         }
       }
       
-      // Limpiar el listener si aún está activo
+      // Limpiar los listeners si aún están activos
       client.removeListener('message_create', messageListener);
+      client.removeListener('message', messageListener);
       
       // Si llegamos aquí sin éxito, lanzar error
       throw new Error('El PDF no se envió correctamente');
