@@ -162,28 +162,30 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
   }
 
   // 5. LOGO "plustiket" (al final, centrado, llamativo)
-  // Usar un pequeño espacio negativo para que las letras se vean juntas pero sin taparse
-  const logoText = 'plus';
-  const logoText2 = 'tiket';
-  const fontSize = 13; // Tamaño más grande para que sea más llamativo
-  const spacing = -2; // Espacio negativo pequeño para que se vean juntas pero sin taparse
+  // Calcular el ancho exacto de cada parte para que se vea continuo y claro
+  const fontSize = 13;
+  const logoPart1 = 'plus';
+  const logoPart2 = 'tiket';
   
-  const logoWidth = doc.widthOfString(logoText, { fontSize: fontSize, font: 'Helvetica-Bold' });
-  const logoWidth2 = doc.widthOfString(logoText2, { fontSize: fontSize, font: 'Helvetica-Bold' });
-  const totalLogoWidth = logoWidth + logoWidth2 + spacing;
-  const logoX = (ticketWidth - totalLogoWidth) / 2;
+  // Calcular ancho de cada parte
+  const width1 = doc.widthOfString(logoPart1, { fontSize: fontSize, font: 'Helvetica-Bold' });
+  const width2 = doc.widthOfString(logoPart2, { fontSize: fontSize, font: 'Helvetica-Bold' });
+  
+  // Calcular posición para centrar el logo completo
+  const totalWidth = width1 + width2;
+  const startX = (ticketWidth - totalWidth) / 2;
 
   // "plus" en negro
   doc.fontSize(fontSize)
      .font('Helvetica-Bold')
      .fillColor('#000000')
-     .text(logoText, logoX, yPos);
+     .text(logoPart1, startX, yPos);
   
-  // "tiket" en amarillo dorado brillante y llamativo
+  // "tiket" en amarillo, inmediatamente después de "plus" (sin espacio, sin solapamiento)
   doc.fontSize(fontSize)
      .font('Helvetica-Bold')
-     .fillColor('#FFC107') // Amarillo dorado brillante y llamativo
-     .text(logoText2, logoX + logoWidth + spacing, yPos);
+     .fillColor('#FFC107') // Amarillo dorado brillante
+     .text(logoPart2, startX + width1, yPos);
 
   yPos += 12;
 
