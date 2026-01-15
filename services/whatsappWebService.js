@@ -114,7 +114,35 @@ export const inicializarWhatsAppWeb = () => {
     // Evitar errores con mensajes no leídos
     disableAutoRead: true,
     // Deshabilitar el marcado automático de mensajes como vistos
-    markReadOnConnect: false
+    markReadOnConnect: false,
+    // Deshabilitar completamente el sendSeen para evitar errores
+    webVersionCache: {
+      type: 'remote',
+      remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2413.51-beta.html'
+    }
+  });
+  
+  // Interceptar y deshabilitar sendSeen completamente
+  client.on('ready', async () => {
+    try {
+      // Inyectar código para deshabilitar sendSeen
+      const page = await client.pupPage();
+      if (page) {
+        await page.evaluate(() => {
+          // Sobrescribir la función sendSeen para que no haga nada
+          if (window.WWebJS) {
+            const originalSendSeen = window.WWebJS.sendSeen;
+            window.WWebJS.sendSeen = async function() {
+              // No hacer nada, solo retornar éxito
+              return Promise.resolve();
+            };
+          }
+        });
+        console.log('✅ sendSeen deshabilitado completamente');
+      }
+    } catch (err) {
+      console.warn('⚠️ No se pudo deshabilitar sendSeen:', err.message);
+    }
   });
 
   client.on('qr', async (qr) => {
@@ -132,11 +160,33 @@ export const inicializarWhatsAppWeb = () => {
     }
   });
 
-  client.on('ready', () => {
+  client.on('ready', async () => {
     console.log('✅ WhatsApp Web está listo!');
     isReady = true;
     qrCodeData = null;
     qrCodeImage = null;
+    
+    // Intentar deshabilitar sendSeen completamente
+    try {
+      const page = await client.pupPage();
+      if (page) {
+        await page.evaluate(() => {
+          // Sobrescribir la función sendSeen para que no haga nada
+          if (window.WWebJS && window.WWebJS.sendSeen) {
+            const originalSendSeen = window.WWebJS.sendSeen;
+            window.WWebJS.sendSeen = async function() {
+              // No hacer nada, solo retornar éxito silenciosamente
+              console.log('[WWebJS] sendSeen deshabilitado');
+              return Promise.resolve();
+            };
+            console.log('[WWebJS] sendSeen deshabilitado completamente');
+          }
+        });
+        console.log('✅ sendSeen deshabilitado completamente');
+      }
+    } catch (err) {
+      console.warn('⚠️ No se pudo deshabilitar sendSeen:', err.message);
+    }
   });
 
   client.on('authenticated', () => {
@@ -317,22 +367,48 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
     
     try {
       // Usar un enfoque que capture el resultado antes del error
-      const sendPromiseWithCatch = client.sendMessage(numeroFormateado, mensaje)
-        .then((result) => {
-          console.log(`✅ Mensaje enviado exitosamente, resultado recibido`);
-          return { success: true, result };
-        })
-        .catch((err) => {
-          // Si el error es solo de markedUnread/sendSeen, no fallar todavía
-          if (err.message?.includes('markedUnread') || 
-              err.message?.includes('sendSeen') ||
-              err.message?.includes('Evaluation failed')) {
-            console.log(`⚠️ Error de markedUnread/sendSeen, pero el mensaje puede haberse enviado`);
-            return { success: false, error: err, puedeHaberEnviado: true };
+      // Envolver en un try-catch más robusto que ignore errores de sendSeen
+      let resultadoEnvio = null;
+      let errorEnEnvio = null;
+      
+      try {
+        // Intentar enviar directamente sin esperar el sendSeen
+        resultadoEnvio = await client.sendMessage(numeroFormateado, mensaje);
+        console.log(`✅ Mensaje enviado exitosamente, resultado recibido`);
+      } catch (err) {
+        errorEnEnvio = err;
+        // Si el error es solo de markedUnread/sendSeen, verificar si el mensaje se envió
+        if (err.message?.includes('markedUnread') || 
+            err.message?.includes('sendSeen') ||
+            err.message?.includes('Evaluation failed')) {
+          console.log(`⚠️ Error de markedUnread/sendSeen, pero el mensaje puede haberse enviado`);
+          // Si tenemos un resultado parcial, usarlo
+          if (resultadoEnvio && resultadoEnvio.id) {
+            console.log(`✅ Mensaje enviado antes del error de sendSeen`);
           }
+        } else {
           // Para otros errores, lanzar normalmente
           throw err;
-        });
+        }
+      }
+      
+      // Si tenemos resultado, retornarlo
+      if (resultadoEnvio && resultadoEnvio.id) {
+        const mensajeId = resultadoEnvio.id?._serialized || resultadoEnvio.id?.id || (typeof resultadoEnvio.id === 'string' ? resultadoEnvio.id : JSON.stringify(resultadoEnvio.id)) || 'ID disponible';
+        console.log(`✅ Mensaje de texto enviado exitosamente. ID: ${mensajeId}`);
+        return {
+          success: true,
+          message: 'Mensaje enviado exitosamente por WhatsApp Web',
+          telefono: telefono
+        };
+      }
+      
+      // Si no hay resultado pero hay error de sendSeen, verificar en el chat
+      const sendPromiseWithCatch = Promise.resolve({ 
+        success: false, 
+        error: errorEnEnvio, 
+        puedeHaberEnviado: true 
+      });
       
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Timeout: El envío tardó demasiado')), 30000); // 30 segundos
@@ -540,6 +616,22 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
     } catch (textError) {
       console.error(`❌ Error al enviar mensaje de texto: ${textError.message}`);
       throw new Error(`No se pudo verificar el número. Error: ${textError.message}`);
+    }
+
+    // Deshabilitar sendSeen antes de enviar el PDF
+    try {
+      const page = await client.pupPage();
+      if (page) {
+        await page.evaluate(() => {
+          if (window.WWebJS && window.WWebJS.sendSeen) {
+            window.WWebJS.sendSeen = async function() {
+              return Promise.resolve();
+            };
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('⚠️ No se pudo deshabilitar sendSeen antes del envío del PDF:', err.message);
     }
 
     // SEGUNDO: Enviar el PDF con el mensaje como caption
