@@ -569,25 +569,30 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
       console.warn('⚠️ No se pudo verificar el número, pero continuando con el envío...');
     }
 
-    // PRIMERO: Enviar un mensaje de texto para verificar que el número esté disponible
-    console.log(`📤 Paso 1: Enviando mensaje de texto a ${numeroFormateado}...`);
-    const textoParaEnviar = mensajeTexto || '✅ Su compra se realizó correctamente. Estos son sus boletos:';
-    
+    // Obtener el número de WhatsApp actual para comparar
+    let numeroWhatsAppActual = null;
+    let esMismoNumero = false;
     try {
-      const resultadoTexto = await enviarMensajePorWhatsAppWeb(telefono, textoParaEnviar);
-      if (!resultadoTexto || !resultadoTexto.success) {
-        const errorMsg = resultadoTexto?.message || 'Error desconocido al enviar mensaje de texto';
-        console.error(`❌ Error al enviar mensaje de texto: ${errorMsg}`);
-        throw new Error(`No se pudo enviar el mensaje de texto: ${errorMsg}`);
+      const info = await client.info;
+      if (info && info.wid) {
+        const widString = info.wid.user || info.wid.toString();
+        numeroWhatsAppActual = widString.replace('@c.us', '').replace('@s.whatsapp.net', '');
+        const numeroDestinoSinFormato = numeroFormateado.replace('@c.us', '');
+        esMismoNumero = numeroWhatsAppActual === numeroDestinoSinFormato;
+        console.log(`📱 Número de WhatsApp actual: ${numeroWhatsAppActual}`);
+        console.log(`📱 Número de destino: ${numeroDestinoSinFormato}`);
+        if (esMismoNumero) {
+          console.log(`ℹ️ Enviando al mismo número (chat con uno mismo) - omitiendo mensaje de texto`);
+        }
       }
-      console.log(`✅ Mensaje de texto enviado exitosamente`);
-      // Esperar un momento antes de enviar el PDF
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    } catch (textError) {
-      console.error(`❌ Error al enviar mensaje de texto:`, textError);
-      const errorMessage = textError?.message || textError?.toString() || 'Error desconocido';
-      throw new Error(`No se pudo verificar el número. Error: ${errorMessage}`);
+    } catch (err) {
+      console.warn('⚠️ No se pudo obtener el número de WhatsApp actual:', err.message);
     }
+
+    // Omitir el mensaje de texto completamente debido a problemas con markedUnread
+    // El mensaje de texto no es crítico, podemos enviar directamente el PDF
+    console.log(`ℹ️ Omitiendo mensaje de texto (debido a problemas con markedUnread)`);
+    console.log(`ℹ️ Enviando directamente el PDF con el mensaje como caption`);
 
     // Deshabilitar sendSeen antes de enviar el PDF (opcional, no crítico si falla)
     try {
