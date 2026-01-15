@@ -479,35 +479,60 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
         setTimeout(() => reject(new Error('Timeout: El envío tardó demasiado')), 60000); // 60 segundos
       });
 
-      // Intentar enviar el mensaje
+      // Intentar enviar el mensaje con un enfoque que capture el resultado antes del error
+      console.log(`⏳ Esperando respuesta del envío...`);
+      
+      // Usar Promise.allSettled para capturar el resultado incluso si hay un error después
+      const sendPromiseWithCatch = sendPromise
+        .then((result) => {
+          console.log(`✅ Mensaje enviado exitosamente, resultado recibido`);
+          return { success: true, result };
+        })
+        .catch((err) => {
+          // Si el error es solo de markedUnread/sendSeen, no fallar todavía
+          if (err.message?.includes('markedUnread') || 
+              err.message?.includes('sendSeen') ||
+              err.message?.includes('Evaluation failed')) {
+            console.log(`⚠️ Error de markedUnread/sendSeen, pero el mensaje puede haberse enviado`);
+            return { success: false, error: err, puedeHaberEnviado: true };
+          }
+          // Para otros errores, lanzar normalmente
+          throw err;
+        });
+      
       try {
-        console.log(`⏳ Esperando respuesta del envío...`);
-        mensajeEnviado = await Promise.race([sendPromise, timeoutPromise]);
-        console.log(`✅ Promesa de envío completada. Mensaje recibido:`, mensajeEnviado ? 'Sí' : 'No');
-      } catch (raceError) {
-        errorOcurrido = raceError;
-        console.error(`❌ Error durante el envío: ${raceError.message}`);
+        const resultado = await Promise.race([sendPromiseWithCatch, timeoutPromise]);
         
-        // Si el error es de markedUnread, intentar obtener el mensaje de otra forma
-        if (raceError.message?.includes('markedUnread') || 
-            raceError.message?.includes('sendSeen') ||
-            raceError.message?.includes('Evaluation failed')) {
+        // Si el mensaje se envió exitosamente
+        if (resultado && resultado.success && resultado.result) {
+          mensajeEnviado = resultado.result;
+          const mensajeId = resultado.result.id?._serialized || resultado.result.id?.id || (typeof resultado.result.id === 'string' ? resultado.result.id : JSON.stringify(resultado.result.id)) || 'ID disponible';
+          console.log(`✅ PDF enviado exitosamente. ID del mensaje: ${mensajeId}`);
+          return {
+            success: true,
+            message: 'PDF enviado exitosamente por WhatsApp Web',
+            telefono: telefono
+          };
+        }
+        
+        // Si hay un error pero puede haberse enviado, verificar en el chat
+        if (resultado && resultado.puedeHaberEnviado) {
           console.log(`⚠️ Error de markedUnread/sendSeen detectado. Verificando si el mensaje se envió...`);
-          // Esperar un momento para que el mensaje se procese
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          // Intentar obtener el mensaje del resultado de la promesa si está disponible
+          // Esperar más tiempo para que el mensaje se procese completamente
+          await new Promise(resolve => setTimeout(resolve, 8000));
+          
           try {
-            // El mensaje puede haberse enviado antes del error de sendSeen
             const chat = await client.getChatById(numeroFormateado);
-            const messages = await chat.fetchMessages({ limit: 10 });
+            const messages = await chat.fetchMessages({ limit: 15 });
             console.log(`📋 Total de mensajes encontrados: ${messages.length}`);
             
-            // Buscar mensaje reciente que tenga media
+            // Buscar mensaje reciente que tenga media (documento o imagen)
             const ultimoMensaje = messages.find(m => {
               const mensajeTimestamp = m.timestamp ? m.timestamp * 1000 : 0;
-              const esReciente = mensajeTimestamp >= timestampAntesEnvio - 30000; // 30 segundos de margen
-              console.log(`🔍 Mensaje: fromMe=${m.fromMe}, hasMedia=${m.hasMedia}, tipo=${m.type}, timestamp=${mensajeTimestamp}, esReciente=${esReciente}`);
-              return m.fromMe && m.hasMedia && esReciente;
+              const esReciente = mensajeTimestamp >= timestampAntesEnvio - 120000; // 2 minutos de margen
+              const esDocumento = m.type === 'document' || m.type === 'ptt' || (m.hasMedia && m.type !== 'chat');
+              console.log(`🔍 Mensaje: fromMe=${m.fromMe}, hasMedia=${m.hasMedia}, tipo=${m.type}, timestamp=${mensajeTimestamp} (${new Date(mensajeTimestamp).toISOString()}), esReciente=${esReciente}, esDocumento=${esDocumento}`);
+              return m.fromMe && esDocumento && esReciente;
             });
             
             if (ultimoMensaje) {
@@ -515,14 +540,32 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
               const mensajeId = ultimoMensaje.id?._serialized || ultimoMensaje.id?.id || (typeof ultimoMensaje.id === 'string' ? ultimoMensaje.id : JSON.stringify(ultimoMensaje.id)) || 'ID disponible';
               console.log(`✅ Mensaje encontrado después del error de sendSeen. ID: ${mensajeId}`);
               console.log(`📋 Tipo de mensaje: ${ultimoMensaje.type}, Tiene media: ${ultimoMensaje.hasMedia}, Timestamp: ${ultimoMensaje.timestamp}`);
+              return {
+                success: true,
+                message: 'PDF enviado exitosamente por WhatsApp Web',
+                telefono: telefono,
+                warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
+              };
             } else {
-              console.error(`❌ No se encontró ningún mensaje reciente con media en el chat`);
+              console.error(`❌ No se encontró ningún mensaje reciente con media en el chat después de 8 segundos`);
+              errorOcurrido = resultado.error;
             }
           } catch (checkError) {
             console.error('❌ Error al verificar el mensaje:', checkError.message);
             console.error('❌ Stack:', checkError.stack);
+            errorOcurrido = resultado.error;
           }
         } else {
+          errorOcurrido = resultado?.error || new Error('Error desconocido al enviar');
+        }
+      } catch (raceError) {
+        errorOcurrido = raceError;
+        console.error(`❌ Error durante el envío: ${raceError.message}`);
+        
+        // Si el error NO es de markedUnread, lanzarlo
+        if (!raceError.message?.includes('markedUnread') && 
+            !raceError.message?.includes('sendSeen') &&
+            !raceError.message?.includes('Evaluation failed')) {
           throw raceError;
         }
       }
