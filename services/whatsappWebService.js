@@ -114,35 +114,7 @@ export const inicializarWhatsAppWeb = () => {
     // Evitar errores con mensajes no leídos
     disableAutoRead: true,
     // Deshabilitar el marcado automático de mensajes como vistos
-    markReadOnConnect: false,
-    // Deshabilitar completamente el sendSeen para evitar errores
-    webVersionCache: {
-      type: 'remote',
-      remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2413.51-beta.html'
-    }
-  });
-  
-  // Interceptar y deshabilitar sendSeen completamente
-  client.on('ready', async () => {
-    try {
-      // Inyectar código para deshabilitar sendSeen
-      const page = await client.pupPage();
-      if (page) {
-        await page.evaluate(() => {
-          // Sobrescribir la función sendSeen para que no haga nada
-          if (window.WWebJS) {
-            const originalSendSeen = window.WWebJS.sendSeen;
-            window.WWebJS.sendSeen = async function() {
-              // No hacer nada, solo retornar éxito
-              return Promise.resolve();
-            };
-          }
-        });
-        console.log('✅ sendSeen deshabilitado completamente');
-      }
-    } catch (err) {
-      console.warn('⚠️ No se pudo deshabilitar sendSeen:', err.message);
-    }
+    markReadOnConnect: false
   });
 
   client.on('qr', async (qr) => {
@@ -166,26 +138,26 @@ export const inicializarWhatsAppWeb = () => {
     qrCodeData = null;
     qrCodeImage = null;
     
-    // Intentar deshabilitar sendSeen completamente
+    // Intentar deshabilitar sendSeen completamente (opcional, no crítico si falla)
     try {
-      const page = await client.pupPage();
-      if (page) {
-        await page.evaluate(() => {
-          // Sobrescribir la función sendSeen para que no haga nada
-          if (window.WWebJS && window.WWebJS.sendSeen) {
-            const originalSendSeen = window.WWebJS.sendSeen;
-            window.WWebJS.sendSeen = async function() {
-              // No hacer nada, solo retornar éxito silenciosamente
-              console.log('[WWebJS] sendSeen deshabilitado');
-              return Promise.resolve();
-            };
-            console.log('[WWebJS] sendSeen deshabilitado completamente');
-          }
-        });
-        console.log('✅ sendSeen deshabilitado completamente');
+      if (client && typeof client.pupPage === 'function') {
+        const page = await client.pupPage();
+        if (page) {
+          await page.evaluate(() => {
+            // Sobrescribir la función sendSeen para que no haga nada
+            if (window.WWebJS && window.WWebJS.sendSeen) {
+              window.WWebJS.sendSeen = async function() {
+                // No hacer nada, solo retornar éxito silenciosamente
+                return Promise.resolve();
+              };
+            }
+          });
+          console.log('✅ sendSeen deshabilitado completamente');
+        }
       }
     } catch (err) {
-      console.warn('⚠️ No se pudo deshabilitar sendSeen:', err.message);
+      // No crítico si falla, continuar normalmente
+      console.warn('⚠️ No se pudo deshabilitar sendSeen (continuando):', err.message);
     }
   });
 
@@ -618,20 +590,23 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
       throw new Error(`No se pudo verificar el número. Error: ${textError.message}`);
     }
 
-    // Deshabilitar sendSeen antes de enviar el PDF
+    // Deshabilitar sendSeen antes de enviar el PDF (opcional, no crítico si falla)
     try {
-      const page = await client.pupPage();
-      if (page) {
-        await page.evaluate(() => {
-          if (window.WWebJS && window.WWebJS.sendSeen) {
-            window.WWebJS.sendSeen = async function() {
-              return Promise.resolve();
-            };
-          }
-        });
+      if (client && typeof client.pupPage === 'function') {
+        const page = await client.pupPage();
+        if (page) {
+          await page.evaluate(() => {
+            if (window.WWebJS && window.WWebJS.sendSeen) {
+              window.WWebJS.sendSeen = async function() {
+                return Promise.resolve();
+              };
+            }
+          });
+        }
       }
     } catch (err) {
-      console.warn('⚠️ No se pudo deshabilitar sendSeen antes del envío del PDF:', err.message);
+      // No crítico si falla, continuar con el envío
+      console.warn('⚠️ No se pudo deshabilitar sendSeen antes del envío del PDF (continuando):', err.message);
     }
 
     // SEGUNDO: Enviar el PDF con el mensaje como caption
