@@ -20,64 +20,40 @@ const generarCodigoBoleto = (codigoUnico, index) => {
 };
 
 /**
- * Genera un boleto individual compacto (diseño similar a las imágenes)
+ * Genera un boleto individual en formato ticket térmico (80mm de ancho)
  */
-const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entradaGeneral, index, total, precio, startYOverride = null) => {
-  // Dimensiones del boleto (más pequeño, similar a las imágenes)
-  const boletoWidth = 400; // Ancho del boleto
-  const boletoHeight = 200; // Alto del boleto
-  const margin = 20;
-  const pageWidth = 595; // A4 width
-  const pageHeight = 842; // A4 height
+const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entradaGeneral, index, total, precio) => {
+  // Dimensiones para ticket térmico 80mm (aproximadamente 226 puntos a 72 DPI)
+  // Usaremos un ancho de 80mm = 226.77 puntos
+  const ticketWidth = doc.page.width || 226.77; // 80mm en puntos
+  const margin = 10;
+  const contentWidth = ticketWidth - (margin * 2);
   
-  // Calcular posición para centrar el boleto en la página
-  const startX = (pageWidth - boletoWidth) / 2;
-  let startY = startYOverride !== null ? startYOverride : (margin + (index * (boletoHeight + margin * 2)));
-  
-  // Si no cabe en la página, crear nueva página
-  if (startY + boletoHeight > pageHeight - margin) {
-    doc.addPage();
-    startY = margin;
-  }
+  let yPos = margin;
 
-  // Fondo blanco del boleto
-  doc.rect(startX, startY, boletoWidth, boletoHeight)
-     .fillColor('#FFFFFF')
-     .fill()
-     .strokeColor('#000000')
-     .lineWidth(1)
-     .stroke();
-
-  let yPos = startY + 15;
-  let xPos = startX + 15;
-
-  // Logo "plustiket" (similar a "todotix" de la imagen)
-  doc.fontSize(18)
+  // Logo "plustiket" (arriba a la izquierda)
+  doc.fontSize(14)
      .font('Helvetica-Bold')
      .fillColor('#000000')
-     .text('plus', xPos, yPos);
+     .text('plus', margin, yPos);
   
-  const plusWidth = doc.widthOfString('plus', { fontSize: 18, font: 'Helvetica-Bold' });
-  doc.fontSize(18)
+  const plusWidth = doc.widthOfString('plus', { fontSize: 14, font: 'Helvetica-Bold' });
+  doc.fontSize(14)
      .font('Helvetica-Bold')
      .fillColor('#E74C3C') // Rojo para "tiket"
-     .text('tiket', xPos + plusWidth, yPos);
+     .text('tiket', margin + plusWidth, yPos);
 
-  yPos += 25;
-
-  // Nombre del evento (en mayúsculas, centrado)
+  // Nombre del evento (centrado, arriba)
   const eventoNombre = (evento.titulo || 'Evento').toUpperCase();
-  doc.fontSize(16)
+  const eventoWidth = doc.widthOfString(eventoNombre, { fontSize: 12, font: 'Helvetica-Bold' });
+  doc.fontSize(12)
      .font('Helvetica-Bold')
      .fillColor('#000000')
-     .text(eventoNombre, startX, yPos, {
-       width: boletoWidth,
-       align: 'center'
-     });
+     .text(eventoNombre, (ticketWidth - eventoWidth) / 2, yPos);
 
-  yPos += 20;
+  yPos += 18;
 
-  // Fecha y hora (formato: 2025-09-23 - 15:00:00)
+  // Fecha y hora (centrado)
   const fechaEvento = evento.hora_inicio 
     ? new Date(evento.hora_inicio).toLocaleDateString('es-ES', {
         year: 'numeric',
@@ -95,24 +71,22 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     : 'Hora no disponible';
 
   const fechaHora = `${fechaEvento} - ${horaEvento}`;
-  doc.fontSize(10)
+  const fechaHoraWidth = doc.widthOfString(fechaHora, { fontSize: 9, font: 'Helvetica' });
+  doc.fontSize(9)
      .font('Helvetica')
      .fillColor('#000000')
-     .text(fechaHora, startX, yPos, {
-       width: boletoWidth,
-       align: 'center'
-     });
+     .text(fechaHora, (ticketWidth - fechaHoraWidth) / 2, yPos);
 
-  yPos += 20;
+  yPos += 15;
 
-  // Sección izquierda: QR Code
-  const qrSize = 100;
-  const qrX = startX + 20;
+  // Sección principal: QR a la izquierda, información a la derecha
+  const qrSize = 80; // QR más pequeño para ticket compacto
+  const qrX = margin;
   const qrY = yPos;
-
-  // Sección derecha: Código alfanumérico vertical
-  const codigoX = startX + boletoWidth - 100;
-  const codigoY = yPos;
+  
+  // Área derecha para código y datos
+  const rightAreaX = margin + qrSize + 10;
+  const rightAreaWidth = contentWidth - qrSize - 10;
 
   // Generar código alfanumérico único
   const codigoBoleto = generarCodigoBoleto(compra.codigo_unico, index);
@@ -125,17 +99,17 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
       : (entradaGeneral && entradaGeneral.codigo_escaneo) 
         ? entradaGeneral.codigo_escaneo 
         : null;
-  
+
   // Generar QR Code
   try {
     const qrData = codigoEscaneo || JSON.stringify({
-    codigo: compra.codigo_unico,
-    compra_id: compra.id,
-    evento_id: evento.id,
-    asiento_id: asiento?.id || mesa?.id || null,
-    timestamp: Date.now(),
-    index: index
-  });
+      codigo: compra.codigo_unico,
+      compra_id: compra.id,
+      evento_id: evento.id,
+      asiento_id: asiento?.id || mesa?.id || null,
+      timestamp: Date.now(),
+      index: index
+    });
 
     const qrImageBuffer = await QRCode.toBuffer(qrData, {
       errorCorrectionLevel: 'H',
@@ -152,22 +126,19 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     console.error('Error al generar QR:', qrError);
   }
 
-  // Código alfanumérico vertical (lado derecho) - mostrar cada carácter en una línea
-  doc.fontSize(9)
+  // Código alfanumérico vertical (lado derecho, arriba)
+  let codigoY = qrY;
+  doc.fontSize(8)
      .font('Helvetica-Bold')
      .fillColor('#000000');
   
   // Mostrar código verticalmente (cada carácter en una nueva línea)
-  let charY = codigoY;
   for (let i = 0; i < codigoBoleto.length; i++) {
-    doc.text(codigoBoleto[i], codigoX, charY);
-    charY += 12;
+    doc.text(codigoBoleto[i], rightAreaX + rightAreaWidth - 15, codigoY);
+    codigoY += 10;
   }
 
-  // Información del boleto (debajo del QR)
-  const infoY = qrY + qrSize + 10;
-  
-  // Tipo de boleto
+  // Tipo de boleto (debajo del código, alineado a la derecha)
   let tipoBoleto = 'GENERAL';
   if (asiento && asiento.tipo_precio_nombre) {
     tipoBoleto = asiento.tipo_precio_nombre.toUpperCase();
@@ -175,25 +146,21 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     tipoBoleto = 'MESA';
   }
 
-  doc.fontSize(12)
+  const tipoBoletoWidth = doc.widthOfString(tipoBoleto, { fontSize: 11, font: 'Helvetica-Bold' });
+  doc.fontSize(11)
      .font('Helvetica-Bold')
      .fillColor('#000000')
-     .text(tipoBoleto, startX, infoY, {
-       width: boletoWidth,
-       align: 'center'
-     });
+     .text(tipoBoleto, rightAreaX + rightAreaWidth - tipoBoletoWidth, qrY + 20);
 
-  // Precio
+  // Precio (debajo del tipo de boleto, alineado a la derecha)
   const precioTexto = precio ? `Bs. ${parseFloat(precio).toFixed(2)}` : 'Bs. 0.00';
-  doc.fontSize(11)
+  const precioWidth = doc.widthOfString(precioTexto, { fontSize: 10, font: 'Helvetica' });
+  doc.fontSize(10)
      .font('Helvetica')
      .fillColor('#000000')
-     .text(precioTexto, startX, infoY + 15, {
-       width: boletoWidth,
-       align: 'center'
-     });
+     .text(precioTexto, rightAreaX + rightAreaWidth - precioWidth, qrY + 35);
 
-  // Asiento (si aplica)
+  // Asiento (si aplica, debajo del precio)
   if (asiento && asiento.numero_asiento) {
     let asientoTexto = `Asiento: ${asiento.numero_asiento}`;
     if (asiento.numero_mesa) {
@@ -202,43 +169,46 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
       asientoTexto = `Asiento: ${asiento.area_nombre} - ${asiento.numero_asiento}`;
     }
     
-    doc.fontSize(9)
+    const asientoWidth = doc.widthOfString(asientoTexto, { fontSize: 8, font: 'Helvetica' });
+    doc.fontSize(8)
        .font('Helvetica')
        .fillColor('#000000')
-       .text(asientoTexto, startX, infoY + 30, {
-         width: boletoWidth,
-         align: 'center'
-       });
+       .text(asientoTexto, rightAreaX + rightAreaWidth - asientoWidth, qrY + 50);
   } else if (mesa && mesa.numero_mesa) {
-    doc.fontSize(9)
+    const mesaTexto = `Mesa: M${mesa.numero_mesa}`;
+    const mesaWidth = doc.widthOfString(mesaTexto, { fontSize: 8, font: 'Helvetica' });
+    doc.fontSize(8)
        .font('Helvetica')
        .fillColor('#000000')
-       .text(`Mesa: M${mesa.numero_mesa}`, startX, infoY + 30, {
-         width: boletoWidth,
-         align: 'center'
-       });
+       .text(mesaTexto, rightAreaX + rightAreaWidth - mesaWidth, qrY + 50);
   }
 
-  // Número de orden (código único de la compra)
-      doc.fontSize(8)
+  // Número de orden (abajo, centrado)
+  const ordenY = qrY + qrSize + 10;
+  const ordenTexto = `Número de orden: ${compra.codigo_unico}`;
+  const ordenWidth = doc.widthOfString(ordenTexto, { fontSize: 7, font: 'Helvetica' });
+  doc.fontSize(7)
      .font('Helvetica')
      .fillColor('#666666')
-     .text(`Número de orden: ${compra.codigo_unico}`, startX, infoY + 45, {
-       width: boletoWidth,
-           align: 'center'
-         });
+     .text(ordenTexto, (ticketWidth - ordenWidth) / 2, ordenY);
+
+  // Retornar la altura usada para este boleto
+  return ordenY + 15;
 };
 
 /**
  * Genera la factura/comprobante (similar a la imagen)
  */
 const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGenerales) => {
+  // Para la factura usamos tamaño A4 normal
   const pageWidth = 595;
   const pageHeight = 842;
   const margin = 40;
   const contentWidth = pageWidth - (margin * 2);
 
-  doc.addPage();
+  doc.addPage({
+    size: 'A4'
+  });
 
   let yPos = margin;
 
@@ -247,9 +217,9 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
      .font('Helvetica-Bold')
      .fillColor('#000000')
      .text('FACTURA CON DERECHO A CRÉDITO FISCAL', margin, yPos, {
-         width: contentWidth,
-         align: 'center'
-       });
+       width: contentWidth,
+       align: 'center'
+     });
 
   yPos += 20;
 
@@ -337,7 +307,7 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
      .lineTo(pageWidth - margin, yPos)
      .strokeColor('#000000')
      .lineWidth(0.5)
-         .stroke();
+     .stroke();
 
   yPos += 15;
 
@@ -502,8 +472,8 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
 
   // Monto en palabras
   const numeroEnPalabras = convertirNumeroAPalabras(montoAPagar);
-    doc.fontSize(8)
-       .font('Helvetica')
+  doc.fontSize(8)
+     .font('Helvetica')
      .text(`Son: ${numeroEnPalabras} 00/100 bolivianos`, margin, yPos, {
        width: contentWidth
      });
@@ -524,21 +494,21 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
      .font('Helvetica')
      .fillColor('#000000')
      .text('"ESTA FACTURA CONTRIBUYE AL DESARROLLO DEL PAÍS, EL USO ILÍCITO DE ÉSTA SERÁ SANCIONADO DE ACUERDO A LEY"', margin, yPos, {
-         width: contentWidth,
-         align: 'center'
-       });
+       width: contentWidth,
+       align: 'center'
+     });
 
   yPos += 12;
   doc.text('Ley N° 453: El proveedor debe exhibir certificaciones de habilitación o documentos que acrediten las capacidades u ofertas de servicios especializados', margin, yPos, {
-           width: contentWidth,
-           align: 'center'
-         });
+     width: contentWidth,
+     align: 'center'
+   });
 
   yPos += 12;
   doc.text('"Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea"', margin, yPos, {
-         width: contentWidth,
-         align: 'center'
-       });
+     width: contentWidth,
+     align: 'center'
+   });
 };
 
 /**
@@ -578,7 +548,7 @@ const convertirNumeroAPalabras = (numero) => {
 };
 
 /**
- * Genera un PDF del boleto de entrada con nuevo diseño compacto
+ * Genera un PDF del boleto de entrada con formato ticket térmico
  * @param {Object} compra - Datos de la compra
  * @param {Object} evento - Datos del evento
  * @param {Array} asientos - Array de asientos
@@ -599,9 +569,13 @@ export const generarBoletoPDF = async (compra, evento, asientos = [], mesas = []
       const filename = `boleto-${compra.codigo_unico}-${Date.now()}.pdf`;
       const filepath = path.join(boletosDir, filename);
 
-      // Crear documento PDF
+      // Crear documento PDF con tamaño personalizado para ticket térmico (80mm de ancho)
+      // 80mm = 226.77 puntos a 72 DPI
+      const ticketWidth = 226.77; // 80mm
+      const ticketHeight = 150; // Alto inicial, se ajustará según contenido
+
       const doc = new PDFDocument({
-        size: 'A4',
+        size: [ticketWidth, ticketHeight],
         margin: 0
       });
 
@@ -612,70 +586,65 @@ export const generarBoletoPDF = async (compra, evento, asientos = [], mesas = []
       // Calcular total de entradas
       const totalEntradas = asientos.length + mesas.length + entradasGenerales.length || (compra.cantidad || 1);
 
+      let currentY = 0;
+      let ticketIndex = 0;
+
       // Generar boletos individuales
-      let globalIndex = 0;
-      const boletoHeight = 200;
-      const margin = 20;
-      const boletoSpacing = boletoHeight + margin * 2;
-      
       // Asientos
-        for (let i = 0; i < asientos.length; i++) {
-        // Calcular posición Y
-        let currentY = margin + (globalIndex * boletoSpacing);
-        
-        // Si no cabe en la página, crear nueva página
-        if (currentY + boletoHeight > 842 - margin) {
-            doc.addPage();
-          currentY = margin;
-          globalIndex = 0; // Reiniciar índice en nueva página
+      for (let i = 0; i < asientos.length; i++) {
+        if (ticketIndex > 0) {
+          // Agregar nueva página para cada boleto adicional
+          doc.addPage({
+            size: [ticketWidth, ticketHeight],
+            margin: 0
+          });
+          currentY = 0;
         }
-        
         const precio = parseFloat(asientos[i].precio || 0);
-        await generarBoletoIndividual(doc, compra, evento, asientos[i], null, null, globalIndex, totalEntradas, precio, currentY);
-        globalIndex++;
+        const alturaUsada = await generarBoletoIndividual(doc, compra, evento, asientos[i], null, null, i, totalEntradas, precio);
+        currentY = alturaUsada;
+        ticketIndex++;
       }
 
       // Mesas
-        for (let i = 0; i < mesas.length; i++) {
-        // Calcular posición Y
-        let currentY = margin + (globalIndex * boletoSpacing);
-        
-        // Si no cabe en la página, crear nueva página
-        if (currentY + boletoHeight > 842 - margin) {
-            doc.addPage();
-          currentY = margin;
-          globalIndex = 0; // Reiniciar índice en nueva página
+      for (let i = 0; i < mesas.length; i++) {
+        if (ticketIndex > 0) {
+          doc.addPage({
+            size: [ticketWidth, ticketHeight],
+            margin: 0
+          });
+          currentY = 0;
         }
-        
+        const index = asientos.length + i;
         const precio = parseFloat(mesas[i].precio_total || 0) / (mesas[i].cantidad_sillas || 1);
-        await generarBoletoIndividual(doc, compra, evento, null, mesas[i], null, globalIndex, totalEntradas, precio, currentY);
-        globalIndex++;
+        const alturaUsada = await generarBoletoIndividual(doc, compra, evento, null, mesas[i], null, index, totalEntradas, precio);
+        currentY = alturaUsada;
+        ticketIndex++;
       }
 
       // Entradas generales
-        for (let i = 0; i < entradasGenerales.length; i++) {
-        // Calcular posición Y
-        let currentY = margin + (globalIndex * boletoSpacing);
-        
-        // Si no cabe en la página, crear nueva página
-        if (currentY + boletoHeight > 842 - margin) {
-            doc.addPage();
-          currentY = margin;
-          globalIndex = 0; // Reiniciar índice en nueva página
+      for (let i = 0; i < entradasGenerales.length; i++) {
+        if (ticketIndex > 0) {
+          doc.addPage({
+            size: [ticketWidth, ticketHeight],
+            margin: 0
+          });
+          currentY = 0;
         }
-        
+        const index = asientos.length + mesas.length + i;
         const precio = parseFloat(compra.total || 0) / totalEntradas;
-        await generarBoletoIndividual(doc, compra, evento, null, null, entradasGenerales[i], globalIndex, totalEntradas, precio, currentY);
-        globalIndex++;
+        const alturaUsada = await generarBoletoIndividual(doc, compra, evento, null, null, entradasGenerales[i], index, totalEntradas, precio);
+        currentY = alturaUsada;
+        ticketIndex++;
       }
 
       // Si no hay entradas específicas, generar un boleto general
       if (totalEntradas === 0 || (asientos.length === 0 && mesas.length === 0 && entradasGenerales.length === 0)) {
         const precio = parseFloat(compra.total || 0) / (compra.cantidad || 1);
-        await generarBoletoIndividual(doc, compra, evento, null, null, null, 0, 1, precio, margin);
+        await generarBoletoIndividual(doc, compra, evento, null, null, null, 0, 1, precio);
       }
 
-      // Generar factura/comprobante al final
+      // Generar factura/comprobante al final (en tamaño A4)
       await generarFactura(doc, compra, evento, asientos, mesas, entradasGenerales);
 
       // Finalizar PDF
