@@ -796,79 +796,80 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
             };
           }
         } catch (sendErr) {
-        console.log(`⚠️ Error al enviar: ${sendErr.message}`);
-        
-        // Si el error es de markedUnread, esperar y verificar
-        if (sendErr.message?.includes('markedUnread') || 
-            sendErr.message?.includes('sendSeen') ||
-            sendErr.message?.includes('Evaluation failed') ||
-            sendErr.message?.includes('Timeout')) {
-          console.log(`⚠️ Error de markedUnread/Timeout. Esperando 30 segundos para detectar el mensaje...`);
+          console.log(`⚠️ Error al enviar: ${sendErr.message}`);
           
-          // Esperar hasta 30 segundos para que el evento se dispare
-          for (let i = 0; i < 30; i++) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            if (mensajeEnviadoDetectado) {
-              console.log(`✅ Mensaje detectado por evento después de ${i + 1} segundos!`);
-              client.removeListener('message_create', messageListener);
-              client.removeListener('message', messageListener);
-              return {
-                success: true,
-                message: 'PDF enviado exitosamente por WhatsApp Web',
-                telefono: telefono,
-                warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
-              };
-            }
-          }
-          
-          // Si no se detectó por evento, verificar en el chat
-          console.log(`🔍 No se detectó por evento, verificando en el chat...`);
-          client.removeListener('message_create', messageListener);
-          client.removeListener('message', messageListener);
-          
-          try {
-            const chat = await client.getChatById(numeroFormateado);
-            const messages = await chat.fetchMessages({ limit: 50 });
-            console.log(`📋 Total de mensajes en el chat: ${messages.length}`);
+          // Si el error es de markedUnread, esperar y verificar
+          if (sendErr.message?.includes('markedUnread') || 
+              sendErr.message?.includes('sendSeen') ||
+              sendErr.message?.includes('Evaluation failed') ||
+              sendErr.message?.includes('Timeout')) {
+            console.log(`⚠️ Error de markedUnread/Timeout. Esperando 30 segundos para detectar el mensaje...`);
             
-            // Buscar cualquier mensaje reciente con media
-            const ultimoMensaje = messages.find(m => {
-              const mensajeTimestamp = m.timestamp ? m.timestamp * 1000 : 0;
-              const esReciente = mensajeTimestamp >= timestampAntesEnvio - 600000; // 10 minutos de margen
-              const tieneMedia = m.hasMedia && (m.type === 'document' || m.type === 'ptt');
-              const esMio = m.fromMe;
-              
-              if (esMio && tieneMedia) {
-                console.log(`🔍 Mensaje candidato: tipo=${m.type}, timestamp=${new Date(mensajeTimestamp).toISOString()}, esReciente=${esReciente}, diff=${mensajeTimestamp - timestampAntesEnvio}ms`);
+            // Esperar hasta 30 segundos para que el evento se dispare
+            for (let i = 0; i < 30; i++) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              if (mensajeEnviadoDetectado) {
+                console.log(`✅ Mensaje detectado por evento después de ${i + 1} segundos!`);
+                client.removeListener('message_create', messageListener);
+                client.removeListener('message', messageListener);
+                return {
+                  success: true,
+                  message: 'PDF enviado exitosamente por WhatsApp Web',
+                  telefono: telefono,
+                  warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
+                };
               }
-              
-              return esMio && tieneMedia && esReciente;
-            });
-            
-            if (ultimoMensaje) {
-              const mensajeId = ultimoMensaje.id?._serialized || ultimoMensaje.id?.id || (typeof ultimoMensaje.id === 'string' ? ultimoMensaje.id : JSON.stringify(ultimoMensaje.id)) || 'ID disponible';
-              console.log(`✅ PDF encontrado en el chat! ID: ${mensajeId}, Tipo: ${ultimoMensaje.type}`);
-              return {
-                success: true,
-                message: 'PDF enviado exitosamente por WhatsApp Web',
-                telefono: telefono,
-                warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
-              };
-            } else {
-              console.error(`❌ No se encontró ningún mensaje reciente después de 30 segundos`);
-              console.error(`⏰ Timestamp de búsqueda: ${new Date(timestampAntesEnvio).toISOString()}`);
-              console.error(`⏰ Timestamp actual: ${new Date().toISOString()}`);
-              throw new Error('El PDF no se envió. El error de markedUnread ocurrió antes del envío.');
             }
-          } catch (checkError) {
-            console.error('❌ Error al verificar en el chat:', checkError.message);
-            throw checkError;
+            
+            // Si no se detectó por evento, verificar en el chat
+            console.log(`🔍 No se detectó por evento, verificando en el chat...`);
+            client.removeListener('message_create', messageListener);
+            client.removeListener('message', messageListener);
+            
+            try {
+              const chat = await client.getChatById(numeroFormateado);
+              const messages = await chat.fetchMessages({ limit: 50 });
+              console.log(`📋 Total de mensajes en el chat: ${messages.length}`);
+              
+              // Buscar cualquier mensaje reciente con media
+              const ultimoMensaje = messages.find(m => {
+                const mensajeTimestamp = m.timestamp ? m.timestamp * 1000 : 0;
+                const esReciente = mensajeTimestamp >= timestampAntesEnvio - 600000; // 10 minutos de margen
+                const tieneMedia = m.hasMedia && (m.type === 'document' || m.type === 'ptt');
+                const esMio = m.fromMe;
+                
+                if (esMio && tieneMedia) {
+                  console.log(`🔍 Mensaje candidato: tipo=${m.type}, timestamp=${new Date(mensajeTimestamp).toISOString()}, esReciente=${esReciente}, diff=${mensajeTimestamp - timestampAntesEnvio}ms`);
+                }
+                
+                return esMio && tieneMedia && esReciente;
+              });
+              
+              if (ultimoMensaje) {
+                const mensajeId = ultimoMensaje.id?._serialized || ultimoMensaje.id?.id || (typeof ultimoMensaje.id === 'string' ? ultimoMensaje.id : JSON.stringify(ultimoMensaje.id)) || 'ID disponible';
+                console.log(`✅ PDF encontrado en el chat! ID: ${mensajeId}, Tipo: ${ultimoMensaje.type}`);
+                return {
+                  success: true,
+                  message: 'PDF enviado exitosamente por WhatsApp Web',
+                  telefono: telefono,
+                  warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
+                };
+              } else {
+                console.error(`❌ No se encontró ningún mensaje reciente después de 30 segundos`);
+                console.error(`⏰ Timestamp de búsqueda: ${new Date(timestampAntesEnvio).toISOString()}`);
+                console.error(`⏰ Timestamp actual: ${new Date().toISOString()}`);
+                throw new Error('El PDF no se envió. El error de markedUnread ocurrió antes del envío.');
+              }
+            } catch (checkError) {
+              console.error('❌ Error al verificar en el chat:', checkError.message);
+              throw checkError;
+            }
+          } else {
+            // Para otros errores, lanzar normalmente
+            client.removeListener('message_create', messageListener);
+            client.removeListener('message', messageListener);
+            throw sendErr;
           }
-        } else {
-          // Para otros errores, lanzar normalmente
-          client.removeListener('message_create', messageListener);
-          client.removeListener('message', messageListener);
-          throw sendErr;
         }
       }
       
