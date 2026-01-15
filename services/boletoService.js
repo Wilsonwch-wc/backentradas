@@ -191,17 +191,18 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
 };
 
 /**
- * Genera la factura/comprobante (similar a la imagen)
+ * Genera la factura/comprobante (mismo tamaño que los boletos - 80mm)
  */
 const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGenerales) => {
-  // Para la factura usamos tamaño A4 normal
-  const pageWidth = 595;
-  const pageHeight = 842;
-  const margin = 40;
-  const contentWidth = pageWidth - (margin * 2);
+  // Mismo tamaño que los boletos (80mm de ancho)
+  const ticketWidth = 226.77; // 80mm en puntos
+  const ticketHeight = 400; // Alto suficiente para la factura
+  const margin = 10;
+  const contentWidth = ticketWidth - (margin * 2);
 
   doc.addPage({
-    size: 'A4'
+    size: [ticketWidth, ticketHeight],
+    margin: 0
   });
 
   let yPos = margin;
@@ -305,7 +306,7 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
 
   // Línea separadora
   doc.moveTo(margin, yPos)
-     .lineTo(pageWidth - margin, yPos)
+     .lineTo(ticketWidth - margin, yPos)
      .strokeColor('#000000')
      .lineWidth(0.5)
      .stroke();
