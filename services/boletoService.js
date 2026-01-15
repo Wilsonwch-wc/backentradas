@@ -161,11 +161,12 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     yPos += 10;
   }
 
-  // 5. LOGO "plustiket" (al final, centrado, llamativo, texto continuo)
+  // 5. LOGO "plustiket" (al final, centrado, llamativo)
+  // Usar un pequeño espacio negativo para que las letras se vean juntas pero sin taparse
   const logoText = 'plus';
   const logoText2 = 'tiket';
   const fontSize = 13; // Tamaño más grande para que sea más llamativo
-  const spacing = 0; // Sin espacio para que sea texto continuo
+  const spacing = -2; // Espacio negativo pequeño para que se vean juntas pero sin taparse
   
   const logoWidth = doc.widthOfString(logoText, { fontSize: fontSize, font: 'Helvetica-Bold' });
   const logoWidth2 = doc.widthOfString(logoText2, { fontSize: fontSize, font: 'Helvetica-Bold' });
@@ -178,7 +179,7 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
      .fillColor('#000000')
      .text(logoText, logoX, yPos);
   
-  // "tiket" en amarillo dorado brillante y llamativo (pegado a "plus")
+  // "tiket" en amarillo dorado brillante y llamativo
   doc.fontSize(fontSize)
      .font('Helvetica-Bold')
      .fillColor('#FFC107') // Amarillo dorado brillante y llamativo
@@ -509,27 +510,30 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
      .lineWidth(0.5)
      .stroke();
 
-  yPos += 10;
+  yPos += 12;
 
-  // Textos legales
+  // Textos legales (con más espacio entre ellos para que no se choquen)
   doc.fontSize(5)
      .font('Helvetica')
      .fillColor('#000000')
      .text('"ESTA FACTURA CONTRIBUYE AL DESARROLLO DEL PAÍS, EL USO ILÍCITO DE ÉSTA SERÁ SANCIONADO DE ACUERDO A LEY"', margin, yPos, {
        width: contentWidth,
-       align: 'center'
+       align: 'center',
+       lineGap: 2
      });
 
-  yPos += 8;
+  yPos += 12; // Más espacio entre textos para evitar que se choquen
   doc.text('Ley N° 453: El proveedor debe exhibir certificaciones de habilitación o documentos que acrediten las capacidades u ofertas de servicios especializados', margin, yPos, {
      width: contentWidth,
-     align: 'center'
+     align: 'center',
+     lineGap: 2
    });
 
-  yPos += 8;
+  yPos += 12; // Más espacio entre textos para evitar que se choquen
   doc.text('"Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea"', margin, yPos, {
      width: contentWidth,
-     align: 'center'
+     align: 'center',
+     lineGap: 2
    });
 };
 
