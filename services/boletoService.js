@@ -161,11 +161,11 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     yPos += 10;
   }
 
-  // 5. LOGO "plustiket" (al final, centrado, llamativo)
+  // 5. LOGO "plustiket" (al final, centrado, llamativo, texto continuo)
   const logoText = 'plus';
   const logoText2 = 'tiket';
   const fontSize = 13; // Tamaño más grande para que sea más llamativo
-  const spacing = 5; // Más espacio entre "plus" y "tiket" para evitar que choquen la "s" y la "t"
+  const spacing = 0; // Sin espacio para que sea texto continuo
   
   const logoWidth = doc.widthOfString(logoText, { fontSize: fontSize, font: 'Helvetica-Bold' });
   const logoWidth2 = doc.widthOfString(logoText2, { fontSize: fontSize, font: 'Helvetica-Bold' });
@@ -178,7 +178,7 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
      .fillColor('#000000')
      .text(logoText, logoX, yPos);
   
-  // "tiket" en amarillo dorado brillante y llamativo
+  // "tiket" en amarillo dorado brillante y llamativo (pegado a "plus")
   doc.fontSize(fontSize)
      .font('Helvetica-Bold')
      .fillColor('#FFC107') // Amarillo dorado brillante y llamativo
@@ -231,8 +231,8 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
      .text('Quillacollo, Cochabamba', margin, yPos + 24);
   doc.text('Bolivia', margin, yPos + 36);
 
-  // Información de factura (lado derecho)
-  const rightX = ticketWidth - margin - 80;
+  // Información de factura (lado derecho, más a la izquierda para dejar espacio al QR)
+  const rightX = ticketWidth - margin - 100; // Más a la izquierda para dejar espacio
   doc.fontSize(7)
      .font('Helvetica')
      .text('NIT:', rightX, yPos);
@@ -241,7 +241,7 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
   doc.text('FACTURA N°: 0', rightX, yPos + 10);
   doc.text('CÓD. AUTORIZACIÓN:', rightX, yPos + 20);
 
-  // QR Code de la factura (esquina superior derecha, más pequeño)
+  // QR Code de la factura (esquina superior derecha, más pequeño y más abajo para no tapar)
   try {
     const facturaQRData = JSON.stringify({
       tipo: 'factura',
@@ -251,16 +251,18 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
       fecha: new Date().toISOString()
     });
 
+    const qrSize = 40; // QR más pequeño
     const qrImageBuffer = await QRCode.toBuffer(facturaQRData, {
       errorCorrectionLevel: 'H',
       type: 'png',
-      width: 50,
+      width: qrSize,
       margin: 1
     });
 
-    doc.image(qrImageBuffer, ticketWidth - margin - 55, yPos, {
-      width: 50,
-      height: 50
+    // Colocar el QR más abajo para que no tape la información
+    doc.image(qrImageBuffer, ticketWidth - margin - qrSize, yPos + 25, {
+      width: qrSize,
+      height: qrSize
     });
   } catch (qrError) {
     console.error('Error al generar QR de factura:', qrError);
