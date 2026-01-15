@@ -330,6 +330,26 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
 
     // Formatear número
     const numeroFormateado = formatearNumero(telefono);
+    
+    // Obtener el número de WhatsApp actual para comparar
+    let numeroWhatsAppActual = null;
+    try {
+      const info = await client.info;
+      if (info && info.wid) {
+        const widString = info.wid.user || info.wid.toString();
+        numeroWhatsAppActual = widString.replace('@c.us', '').replace('@s.whatsapp.net', '');
+        console.log(`📱 Número de WhatsApp actual: ${numeroWhatsAppActual}`);
+        console.log(`📱 Número de destino formateado: ${numeroFormateado}`);
+        
+        // Si el número de destino es el mismo que el actual, es un chat con uno mismo
+        const numeroDestinoSinFormato = numeroFormateado.replace('@c.us', '');
+        if (numeroWhatsAppActual === numeroDestinoSinFormato) {
+          console.log(`ℹ️ Enviando mensaje al mismo número (chat con uno mismo)`);
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ No se pudo obtener el número de WhatsApp actual:', err.message);
+    }
 
     // Enviar el mensaje con timeout
     console.log(`📤 Intentando enviar mensaje de texto a ${numeroFormateado}...`);
@@ -338,26 +358,25 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
     let errorOcurrido = null;
     
     try {
-      // Usar un enfoque que capture el resultado antes del error
-      // Envolver en un try-catch más robusto que ignore errores de sendSeen
+      // Intentar enviar el mensaje directamente
       let resultadoEnvio = null;
       let errorEnEnvio = null;
       
       try {
-        // Intentar enviar directamente sin esperar el sendSeen
+        console.log(`⏳ Enviando mensaje...`);
         resultadoEnvio = await client.sendMessage(numeroFormateado, mensaje);
         console.log(`✅ Mensaje enviado exitosamente, resultado recibido`);
       } catch (err) {
         errorEnEnvio = err;
-        // Si el error es solo de markedUnread/sendSeen, verificar si el mensaje se envió
+        console.log(`⚠️ Error al enviar: ${err.message}`);
+        
+        // Si el error es solo de markedUnread/sendSeen, el mensaje puede haberse enviado
         if (err.message?.includes('markedUnread') || 
             err.message?.includes('sendSeen') ||
             err.message?.includes('Evaluation failed')) {
           console.log(`⚠️ Error de markedUnread/sendSeen, pero el mensaje puede haberse enviado`);
-          // Si tenemos un resultado parcial, usarlo
-          if (resultadoEnvio && resultadoEnvio.id) {
-            console.log(`✅ Mensaje enviado antes del error de sendSeen`);
-          }
+          // Esperar un momento para que el mensaje se procese
+          await new Promise(resolve => setTimeout(resolve, 3000));
         } else {
           // Para otros errores, lanzar normalmente
           throw err;
@@ -376,47 +395,25 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
       }
       
       // Si no hay resultado pero hay error de sendSeen, verificar en el chat
-      const sendPromiseWithCatch = Promise.resolve({ 
-        success: false, 
-        error: errorEnEnvio, 
-        puedeHaberEnviado: true 
-      });
-      
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Timeout: El envío tardó demasiado')), 30000); // 30 segundos
-      });
-
-      const resultado = await Promise.race([sendPromiseWithCatch, timeoutPromise]);
-      
-      // Si el mensaje se envió exitosamente
-      if (resultado && resultado.success && resultado.result) {
-        mensajeEnviado = resultado.result;
-        const mensajeId = resultado.result.id?._serialized || resultado.result.id?.id || (typeof resultado.result.id === 'string' ? resultado.result.id : JSON.stringify(resultado.result.id)) || 'ID disponible';
-        console.log(`✅ Mensaje de texto enviado exitosamente. ID: ${mensajeId}`);
-        return {
-          success: true,
-          message: 'Mensaje enviado exitosamente por WhatsApp Web',
-          telefono: telefono
-        };
-      }
-      
-      // Si hay un error pero puede haberse enviado, verificar en el chat
-      if (resultado && resultado.puedeHaberEnviado) {
+      if (errorEnEnvio && (errorEnEnvio.message?.includes('markedUnread') || 
+          errorEnEnvio.message?.includes('sendSeen') ||
+          errorEnEnvio.message?.includes('Evaluation failed'))) {
         console.log(`⚠️ Error de markedUnread/sendSeen detectado. Verificando si el mensaje se envió...`);
         // Esperar más tiempo para que el mensaje se procese completamente
         await new Promise(resolve => setTimeout(resolve, 5000));
         
         try {
           const chat = await client.getChatById(numeroFormateado);
-          const messages = await chat.fetchMessages({ limit: 10 });
+          const messages = await chat.fetchMessages({ limit: 15 });
           console.log(`📋 Total de mensajes encontrados: ${messages.length}`);
           
-          // Buscar mensaje reciente de texto
+          // Buscar mensaje reciente de texto que coincida con el mensaje enviado
           const ultimoMensaje = messages.find(m => {
             const mensajeTimestamp = m.timestamp ? m.timestamp * 1000 : 0;
-            const esReciente = mensajeTimestamp >= timestampAntesEnvio - 60000; // 1 minuto de margen
+            const esReciente = mensajeTimestamp >= timestampAntesEnvio - 120000; // 2 minutos de margen
             const esTexto = m.type === 'chat' && m.fromMe && !m.hasMedia;
-            console.log(`🔍 Mensaje: fromMe=${m.fromMe}, tipo=${m.type}, timestamp=${mensajeTimestamp} (${new Date(mensajeTimestamp).toISOString()}), esReciente=${esReciente}, esTexto=${esTexto}`);
+            const coincideConMensaje = m.body && mensaje && m.body.includes(mensaje.substring(0, 20));
+            console.log(`🔍 Mensaje: fromMe=${m.fromMe}, tipo=${m.type}, timestamp=${mensajeTimestamp} (${new Date(mensajeTimestamp).toISOString()}), esReciente=${esReciente}, esTexto=${esTexto}, coincide=${coincideConMensaje}`);
             return esTexto && esReciente;
           });
           
@@ -433,15 +430,15 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
             };
           } else {
             console.error(`❌ No se encontró ningún mensaje reciente de texto en el chat después de 5 segundos`);
-            errorOcurrido = resultado.error;
+            errorOcurrido = errorEnEnvio;
           }
         } catch (checkError) {
           console.error('❌ Error al verificar el mensaje:', checkError.message);
           console.error('❌ Stack:', checkError.stack);
-          errorOcurrido = resultado.error;
+          errorOcurrido = errorEnEnvio;
         }
-      } else {
-        errorOcurrido = resultado?.error || new Error('Error desconocido al enviar');
+      } else if (errorEnEnvio) {
+        errorOcurrido = errorEnEnvio;
       }
       
       // Si llegamos aquí y hay un error, lanzarlo
