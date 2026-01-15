@@ -578,16 +578,18 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
     
     try {
       const resultadoTexto = await enviarMensajePorWhatsAppWeb(telefono, textoParaEnviar);
-      if (!resultadoTexto.success) {
-        console.error(`❌ Error al enviar mensaje de texto: ${resultadoTexto.message}`);
-        throw new Error(`No se pudo enviar el mensaje de texto: ${resultadoTexto.message}`);
+      if (!resultadoTexto || !resultadoTexto.success) {
+        const errorMsg = resultadoTexto?.message || 'Error desconocido al enviar mensaje de texto';
+        console.error(`❌ Error al enviar mensaje de texto: ${errorMsg}`);
+        throw new Error(`No se pudo enviar el mensaje de texto: ${errorMsg}`);
       }
       console.log(`✅ Mensaje de texto enviado exitosamente`);
       // Esperar un momento antes de enviar el PDF
       await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (textError) {
-      console.error(`❌ Error al enviar mensaje de texto: ${textError.message}`);
-      throw new Error(`No se pudo verificar el número. Error: ${textError.message}`);
+      console.error(`❌ Error al enviar mensaje de texto:`, textError);
+      const errorMessage = textError?.message || textError?.toString() || 'Error desconocido';
+      throw new Error(`No se pudo verificar el número. Error: ${errorMessage}`);
     }
 
     // Deshabilitar sendSeen antes de enviar el PDF (opcional, no crítico si falla)
