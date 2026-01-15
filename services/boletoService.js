@@ -165,7 +165,7 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
   const fontSize = 13;
   const logoPart1 = 'plus';
   const logoPart2 = 'tiket';
-  const spacing = 6; // Espacio más grande entre "plus" y "tiket" para que se vean claramente separados
+  const spacing = 10; // Espacio aún más grande entre "plus" y "tiket" para que se vean claramente separados
   
   // Calcular ancho de cada parte
   const width1 = doc.widthOfString(logoPart1, { fontSize: fontSize, font: 'Helvetica-Bold' });
