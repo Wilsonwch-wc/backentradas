@@ -41,7 +41,7 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
 
     // Título
     resumenSheet.mergeCells('A1:E1');
-    resumenSheet.getCell('A1').value = 'REPORTE DE VENTAS - PlusTicket';
+    resumenSheet.getCell('A1').value = 'REPORTE DE VENTAS - PlusTiket';
     resumenSheet.getCell('A1').style = titleStyle;
     resumenSheet.getRow(1).height = 30;
 

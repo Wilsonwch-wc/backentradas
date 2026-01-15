@@ -136,7 +136,7 @@ export const enviarBoletoPorEmail = async (email, nombreCliente, pdfPath, datosC
           <p>Por favor, guarda este correo y lleva tu boleto al evento. ¡Esperamos verte allí! 🎉</p>
         </div>
         <div class="footer">
-          <p>PlusTicket - MAS FACIL IMPOSIBLE</p>
+          <p>PlusTiket - MAS FACIL IMPOSIBLE</p>
           <p>Este es un correo automático, por favor no respondas.</p>
         </div>
       </body>
@@ -145,7 +145,7 @@ export const enviarBoletoPorEmail = async (email, nombreCliente, pdfPath, datosC
 
     // Configurar el correo
     const mailOptions = {
-      from: `"PlusTicket" <${process.env.SMTP_USER}>`,
+      from: `"PlusTiket" <${process.env.SMTP_USER}>`,
       to: email,
       subject: `Tu boleto para ${datosCompra.tituloEvento} - ${datosCompra.codigoUnico}`,
       html: htmlContent,
@@ -261,7 +261,7 @@ export const enviarCodigoVerificacion = async (email, nombreCliente, codigo) => 
         <div class="content">
           <p>Hola <strong>${nombreCliente || 'Usuario'}</strong>,</p>
           
-          <p>Gracias por registrarte en PlusTicket. Para completar tu registro, por favor ingresa el siguiente código de verificación:</p>
+          <p>Gracias por registrarte en PlusTiket. Para completar tu registro, por favor ingresa el siguiente código de verificación:</p>
           
           <div class="codigo-box">
             <p style="margin: 0 0 10px 0; color: #666; font-size: 14px;">Tu código de verificación es:</p>
@@ -281,7 +281,7 @@ export const enviarCodigoVerificacion = async (email, nombreCliente, codigo) => 
           <p>Si no solicitaste este código, puedes ignorar este correo de forma segura.</p>
         </div>
         <div class="footer">
-          <p>PlusTicket - MAS FACIL IMPOSIBLE</p>
+          <p>PlusTiket - MAS FACIL IMPOSIBLE</p>
           <p>Este es un correo automático, por favor no respondas.</p>
         </div>
       </body>
@@ -290,9 +290,9 @@ export const enviarCodigoVerificacion = async (email, nombreCliente, codigo) => 
 
     // Configurar el correo
     const mailOptions = {
-      from: `"PlusTicket" <${process.env.SMTP_USER}>`,
+      from: `"PlusTiket" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: '🔐 Código de verificación - PlusTicket',
+      subject: '🔐 Código de verificación - PlusTiket',
       html: htmlContent
     };
 
@@ -417,7 +417,7 @@ export const enviarCodigoRecuperacion = async (email, nombreCliente, codigo) => 
           </div>
         </div>
         <div class="footer">
-          <p>PlusTicket - MAS FACIL IMPOSIBLE</p>
+          <p>PlusTiket - MAS FACIL IMPOSIBLE</p>
           <p>Este es un correo automático, por favor no respondas.</p>
         </div>
       </body>
@@ -426,9 +426,9 @@ export const enviarCodigoRecuperacion = async (email, nombreCliente, codigo) => 
 
     // Configurar el correo
     const mailOptions = {
-      from: `"PlusTicket" <${process.env.SMTP_USER}>`,
+      from: `"PlusTiket" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: '🔒 Código de recuperación de contraseña - PlusTicket',
+      subject: '🔒 Código de recuperación de contraseña - PlusTiket',
       html: htmlContent
     };
 

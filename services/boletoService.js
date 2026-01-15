@@ -8,257 +8,116 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /**
- * Genera un boleto individual en una página
+ * Genera un código alfanumérico único para el boleto
  */
-const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entradaGeneral, index, total) => {
+const generarCodigoBoleto = (codigoUnico, index) => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let codigo = 'TTX';
+  for (let i = 0; i < 11; i++) {
+    codigo += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return codigo;
+};
+
+/**
+ * Genera un boleto individual compacto (diseño similar a las imágenes)
+ */
+const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entradaGeneral, index, total, precio, startYOverride = null) => {
+  // Dimensiones del boleto (más pequeño, similar a las imágenes)
+  const boletoWidth = 400; // Ancho del boleto
+  const boletoHeight = 200; // Alto del boleto
+  const margin = 20;
   const pageWidth = 595; // A4 width
   const pageHeight = 842; // A4 height
-  const margin = 40;
-  const contentWidth = pageWidth - (margin * 2);
   
-  // Fondo decorativo (opcional)
-  doc.rect(margin, margin, contentWidth, pageHeight - (margin * 2))
-     .strokeColor('#e0e0e0')
-     .lineWidth(2)
-     .stroke();
+  // Calcular posición para centrar el boleto en la página
+  const startX = (pageWidth - boletoWidth) / 2;
+  let startY = startYOverride !== null ? startYOverride : (margin + (index * (boletoHeight + margin * 2)));
+  
+  // Si no cabe en la página, crear nueva página
+  if (startY + boletoHeight > pageHeight - margin) {
+    doc.addPage();
+    startY = margin;
+  }
 
-  // Borde decorativo interno
-  doc.rect(margin + 10, margin + 10, contentWidth - 20, pageHeight - (margin * 2) - 20)
-     .strokeColor('#3498db')
+  // Fondo blanco del boleto
+  doc.rect(startX, startY, boletoWidth, boletoHeight)
+     .fillColor('#FFFFFF')
+     .fill()
+     .strokeColor('#000000')
      .lineWidth(1)
      .stroke();
 
-  let yPos = margin + 25; // Reducido de 40 a 25
+  let yPos = startY + 15;
+  let xPos = startX + 15;
 
-  // Título principal - CENTRADO
-  doc.fontSize(24) // Reducido de 30 a 24
+  // Logo "plustiket" (similar a "todotix" de la imagen)
+  doc.fontSize(18)
      .font('Helvetica-Bold')
-     .fillColor('#2c3e50')
-     .text('ENTRADA', margin, yPos, {
-       width: contentWidth,
+     .fillColor('#000000')
+     .text('plus', xPos, yPos);
+  
+  const plusWidth = doc.widthOfString('plus', { fontSize: 18, font: 'Helvetica-Bold' });
+  doc.fontSize(18)
+     .font('Helvetica-Bold')
+     .fillColor('#E74C3C') // Rojo para "tiket"
+     .text('tiket', xPos + plusWidth, yPos);
+
+  yPos += 25;
+
+  // Nombre del evento (en mayúsculas, centrado)
+  const eventoNombre = (evento.titulo || 'Evento').toUpperCase();
+  doc.fontSize(16)
+     .font('Helvetica-Bold')
+     .fillColor('#000000')
+     .text(eventoNombre, startX, yPos, {
+       width: boletoWidth,
        align: 'center'
      });
 
-  yPos += 28; // Reducido de 35 a 28
+  yPos += 20;
 
-  // Nombre del evento - CENTRADO
-  doc.fontSize(16) // Reducido de 18 a 16
-     .font('Helvetica-Bold')
-     .fillColor('#34495e')
-     .text(evento.titulo || 'Evento', margin, yPos, {
-       width: contentWidth,
-       align: 'center'
-     });
-
-  yPos += 25; // Reducido de 30 a 25
-
-  // Línea decorativa
-  doc.moveTo(margin + 50, yPos)
-     .lineTo(pageWidth - margin - 50, yPos)
-     .strokeColor('#3498db')
-     .lineWidth(2)
-     .stroke();
-
-  yPos += 18; // Reducido de 20 a 18
-
-  // Información del evento - CENTRADO
+  // Fecha y hora (formato: 2025-09-23 - 15:00:00)
   const fechaEvento = evento.hora_inicio 
     ? new Date(evento.hora_inicio).toLocaleDateString('es-ES', {
-        weekday: 'long',
         year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
+        month: '2-digit',
+        day: '2-digit'
+      }).replace(/\//g, '-')
     : 'Fecha no disponible';
-
-  doc.fontSize(10) // Reducido de 11 a 10
-     .font('Helvetica')
-     .fillColor('#7f8c8d')
-     .text('FECHA Y HORA', margin, yPos, {
-       width: contentWidth,
-       align: 'center'
-     });
-
-  yPos += 15; // Reducido de 18 a 15
-
-  doc.fontSize(12) // Reducido de 13 a 12
-     .font('Helvetica-Bold')
-     .fillColor('#2c3e50')
-     .text(fechaEvento, margin, yPos, {
-       width: contentWidth,
-       align: 'center'
-     });
-
-  yPos += 28; // Reducido de 35 a 28
-
-  // Caja de información del cliente
-  const boxY = yPos;
-  const boxHeight = 60; // Reducido de 70 a 60
   
-  doc.rect(margin + 20, boxY, contentWidth - 40, boxHeight)
-     .fillColor('#f8f9fa')
-     .fill()
-     .strokeColor('#bdc3c7')
-     .lineWidth(1)
-     .stroke();
+  const horaEvento = evento.hora_inicio
+    ? new Date(evento.hora_inicio).toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
+    : 'Hora no disponible';
 
-  doc.fontSize(10) // Reducido de 11 a 10
-     .font('Helvetica-Bold')
-     .fillColor('#34495e')
-     .text('CLIENTE', margin + 30, boxY + 10);
-
-  doc.fontSize(9) // Reducido de 10 a 9
+  const fechaHora = `${fechaEvento} - ${horaEvento}`;
+  doc.fontSize(10)
      .font('Helvetica')
-     .fillColor('#2c3e50')
-     .text(compra.cliente_nombre, margin + 30, boxY + 25, {
-       width: contentWidth - 60
-     });
-
-  if (compra.cliente_telefono) {
-    doc.fontSize(8) // Reducido de 9 a 8
-       .fillColor('#7f8c8d')
-       .text(`Tel: ${compra.cliente_telefono}`, margin + 30, boxY + 40);
-  }
-
-  yPos = boxY + boxHeight + 18; // Reducido de 20 a 18
-
-  // Información de la entrada
-  doc.fontSize(10) // Reducido de 11 a 10
-     .font('Helvetica-Bold')
-     .fillColor('#34495e')
-     .text('ENTRADA', margin, yPos, {
-       width: contentWidth,
+     .fillColor('#000000')
+     .text(fechaHora, startX, yPos, {
+       width: boletoWidth,
        align: 'center'
      });
 
-  yPos += 20; // Reducido de 30 a 20
+  yPos += 20;
 
-  // Asiento o Mesa
-  if (asiento) {
-    const asientoBoxY = yPos;
-    // Ajustar altura según si tiene información adicional
-    const tieneInfoExtra = asiento.numero_mesa || asiento.area_nombre;
-    const asientoBoxHeight = tieneInfoExtra ? 70 : 60; // Reducido de 80/65 a 70/60
-    
-    doc.rect(margin + 20, asientoBoxY, contentWidth - 40, asientoBoxHeight)
-       .fillColor('#e8f5e9')
-       .fill()
-       .strokeColor('#27ae60')
-       .lineWidth(2)
-       .stroke();
+  // Sección izquierda: QR Code
+  const qrSize = 100;
+  const qrX = startX + 20;
+  const qrY = yPos;
 
-    // Mostrar tipo de entrada (VIP, GENERAL, etc.) o "ASIENTO" si no hay tipo
-    const tipoEntrada = asiento.tipo_precio_nombre || 'ASIENTO';
-    
-    doc.fontSize(10)
-       .font('Helvetica-Bold')
-       .fillColor('#27ae60')
-       .text(tipoEntrada, margin + 30, asientoBoxY + 15, {
-         width: contentWidth - 60,
-         align: 'center'
-       });
+  // Sección derecha: Código alfanumérico vertical
+  const codigoX = startX + boletoWidth - 100;
+  const codigoY = yPos;
 
-    // Mostrar número de asiento
-    doc.fontSize(20) // Reducido de 24 a 20
-       .font('Helvetica-Bold')
-       .fillColor('#2c3e50')
-       .text(asiento.numero_asiento, margin + 30, asientoBoxY + 30, {
-         width: contentWidth - 60,
-         align: 'center'
-       });
-
-    // Mostrar información adicional (mesa o área)
-    let infoExtraY = asientoBoxY + 55; // Ajustado según nueva altura
-    if (asiento.numero_mesa) {
-      doc.fontSize(9)
-         .font('Helvetica')
-         .fillColor('#7f8c8d')
-         .text(`Mesa M${asiento.numero_mesa}`, margin + 30, infoExtraY, {
-           width: contentWidth - 60,
-           align: 'center'
-         });
-      infoExtraY += 15;
-    }
-    
-    if (asiento.area_nombre) {
-      doc.fontSize(9)
-         .font('Helvetica')
-         .fillColor('#7f8c8d')
-         .text(`Área: ${asiento.area_nombre}`, margin + 30, infoExtraY, {
-           width: contentWidth - 60,
-           align: 'center'
-         });
-    }
-
-         yPos = asientoBoxY + asientoBoxHeight + 18; // Reducido de 20 a 18
-  } else if (mesa) {
-    const mesaBoxY = yPos;
-    const mesaBoxHeight = 60; // Reducido de 65 a 60
-    
-    doc.rect(margin + 20, mesaBoxY, contentWidth - 40, mesaBoxHeight)
-       .fillColor('#e3f2fd')
-       .fill()
-       .strokeColor('#2196f3')
-       .lineWidth(2)
-       .stroke();
-
-    doc.fontSize(10)
-       .font('Helvetica-Bold')
-       .fillColor('#2196f3')
-       .text('MESA', margin + 30, mesaBoxY + 15);
-
-    doc.fontSize(20) // Reducido de 24 a 20
-       .font('Helvetica-Bold')
-       .fillColor('#2c3e50')
-       .text(`M${mesa.numero_mesa}`, margin + 30, mesaBoxY + 30, {
-         width: contentWidth - 60,
-         align: 'center'
-       });
-
-    doc.fontSize(9)
-       .font('Helvetica')
-       .fillColor('#7f8c8d')
-       .text(`${mesa.cantidad_sillas} silla(s)`, margin + 30, mesaBoxY + 50, {
-         width: contentWidth - 60,
-         align: 'center'
-       });
-
-    yPos = mesaBoxY + mesaBoxHeight + 18; // Reducido de 20 a 18
-  } else if (entradaGeneral) {
-    // Para eventos generales, mostrar "GENERAL" y el código de escaneo de la entrada individual
-    const generalBoxY = yPos;
-    const generalBoxHeight = 60; // Reducido de 65 a 60
-    
-    doc.rect(margin + 20, generalBoxY, contentWidth - 40, generalBoxHeight)
-       .fillColor('#f0f0f0')
-       .fill()
-       .strokeColor('#a0a0a0')
-       .lineWidth(2)
-       .stroke();
-
-    doc.fontSize(10)
-       .font('Helvetica-Bold')
-       .fillColor('#505050')
-       .text('GENERAL', margin + 30, generalBoxY + 15, {
-         width: contentWidth - 60,
-         align: 'center'
-       });
-
-    doc.fontSize(16) // Reducido de 20 a 16
-       .font('Helvetica-Bold')
-       .fillColor('#2c3e50')
-       .text(`ENTRADA ${index + 1}`, margin + 30, generalBoxY + 30, {
-         width: contentWidth - 60,
-         align: 'center'
-       });
-    yPos = generalBoxY + generalBoxHeight + 18;
-  }
-
-  // Código de escaneo - CENTRADO Y DESTACADO
-  // Para eventos especiales: viene de asiento o mesa
-  // Para eventos generales: viene de entradaGeneral.codigo_escaneo
+  // Generar código alfanumérico único
+  const codigoBoleto = generarCodigoBoleto(compra.codigo_unico, index);
+  
+  // Código de escaneo para el QR
   const codigoEscaneo = (asiento && asiento.codigo_escaneo) 
     ? asiento.codigo_escaneo 
     : (mesa && mesa.codigo_escaneo) 
@@ -267,62 +126,9 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
         ? entradaGeneral.codigo_escaneo 
         : null;
   
-  if (codigoEscaneo) {
-    doc.fontSize(10) // Reducido de 11 a 10
-       .font('Helvetica-Bold')
-       .fillColor('#7f8c8d')
-       .text('CÓDIGO DE ESCANEO', margin, yPos, {
-         width: contentWidth,
-         align: 'center'
-       });
-
-    yPos += 18; // Reducido de 20 a 18
-
-    // Código en caja destacada
-    const codigoBoxY = yPos;
-    const codigoBoxHeight = 45; // Reducido de 50 a 45
-    
-    doc.rect(margin + 20, codigoBoxY, contentWidth - 40, codigoBoxHeight)
-       .fillColor('#fff3cd')
-       .fill()
-       .strokeColor('#ffc107')
-       .lineWidth(2)
-       .stroke();
-
-    doc.fontSize(22) // Reducido de 28 a 22
-       .font('Helvetica-Bold')
-       .fillColor('#f57c00')
-       .text(codigoEscaneo, margin + 30, codigoBoxY + 8, {
-         width: contentWidth - 60,
-         align: 'center'
-       });
-
-    yPos = codigoBoxY + codigoBoxHeight + 18; // Reducido de 20 a 18
-  }
-
-  // Código único - CENTRADO
-  doc.fontSize(9) // Reducido de 10 a 9
-     .font('Helvetica-Bold')
-     .fillColor('#7f8c8d')
-     .text('CÓDIGO ÚNICO', margin, yPos, {
-       width: contentWidth,
-       align: 'center'
-     });
-
-  yPos += 15; // Reducido de 20 a 15
-
-  doc.fontSize(12) // Reducido de 14 a 12
-     .font('Helvetica-Bold')
-     .fillColor('#27ae60')
-     .text(compra.codigo_unico, margin, yPos, {
-       width: contentWidth,
-       align: 'center'
-     });
-
-  yPos += 25; // Reducido de 30 a 25
-
-  // QR Code - CENTRADO y mejor posicionado
-  const qrData = JSON.stringify({
+  // Generar QR Code
+  try {
+    const qrData = codigoEscaneo || JSON.stringify({
     codigo: compra.codigo_unico,
     compra_id: compra.id,
     evento_id: evento.id,
@@ -331,165 +137,448 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     index: index
   });
 
-  try {
     const qrImageBuffer = await QRCode.toBuffer(qrData, {
       errorCorrectionLevel: 'H',
       type: 'png',
-      width: 180, // Reducido de 200 a 180
+      width: qrSize,
       margin: 1
     });
-
-    const qrSize = 150; // Reducido de 180 a 150
-    const qrX = (pageWidth - qrSize) / 2;
-    
-    // Calcular altura del footer (texto + espacio)
-    const footerHeight = 110; // Altura del footer con plustiket.com
-    
-    // Calcular posición Y para centrar el QR considerando el espacio del footer
-    const espacioRestante = pageHeight - yPos - margin - footerHeight;
-    const qrY = yPos + Math.max(12, (espacioRestante - qrSize) / 2); // Reducido de 15 a 12
     
     doc.image(qrImageBuffer, qrX, qrY, {
       width: qrSize,
       height: qrSize
     });
-
-    doc.fontSize(8)
-       .font('Helvetica')
-       .fillColor('#7f8c8d')
-       .text('Escanea para validar', qrX, qrY + qrSize + 10, {
-         width: qrSize,
-         align: 'center'
-       });
-    
-    // Footer - Colocar después del QR con espacio suficiente
-    let footerY = qrY + qrSize + 30; // Reducido de 40 a 30
-    
-    doc.fontSize(8)
-       .font('Helvetica')
-       .fillColor('#95a5a6')
-       .text('Esta entrada es personal e intransferible. Solo válida para una vez.', margin, footerY, {
-         width: contentWidth,
-         align: 'center'
-       });
-
-    if (total > 1) {
-      doc.fontSize(8)
-         .fillColor('#95a5a6')
-         .text(`Entrada ${index + 1} de ${total}`, margin, footerY + 15, {
-           width: contentWidth,
-           align: 'center'
-         });
-    }
-
-    // Información de pago (pequeña en la parte inferior)
-    doc.fontSize(7)
-       .fillColor('#bdc3c7')
-       .text(`Total pagado: $${parseFloat(compra.total).toFixed(2)} BOB`, margin, footerY + 25, {
-         width: contentWidth,
-         align: 'center'
-       });
-
-    // Agregar dominio "plustiket.com" con diseño al final del PDF
-    // Verificar que quepa en la página antes de agregarlo
-    const dominioBoxWidth = 200; // Reducido de 220 a 200
-    const dominioBoxHeight = 40; // Reducido de 50 a 40
-    const dominioBoxX = (pageWidth - dominioBoxWidth) / 2;
-    const dominioY = footerY + 35; // Espacio después del total pagado
-    
-    // Solo agregar si cabe en la página
-    if (dominioY + dominioBoxHeight < pageHeight - margin - 10) {
-      doc.rect(dominioBoxX, dominioY, dominioBoxWidth, dominioBoxHeight)
-         .fillColor('#f8f9fa')
-         .fill()
-         .strokeColor('#3498db')
-         .lineWidth(2)
-         .stroke();
-      
-      // Texto del dominio con estilo
-      doc.fontSize(16) // Reducido de 20 a 16
-         .font('Helvetica-Bold')
-         .fillColor('#3498db')
-         .text('plustiket.com', dominioBoxX, dominioY + 10, {
-           width: dominioBoxWidth,
-           align: 'center'
-         });
-      
-      // Línea decorativa debajo
-      doc.fontSize(8) // Reducido de 9 a 8
-         .font('Helvetica')
-         .fillColor('#7f8c8d')
-         .text('Tu plataforma de confianza', dominioBoxX, dominioY + 28, {
-           width: dominioBoxWidth,
-           align: 'center'
-         });
-    }
   } catch (qrError) {
     console.error('Error al generar QR:', qrError);
-    
-    // Si hay error con el QR, poner el footer al final
-    const footerY = pageHeight - margin - 40;
-    
-    doc.fontSize(8)
-       .font('Helvetica')
-       .fillColor('#95a5a6')
-       .text('Esta entrada es personal e intransferible. Solo válida para una vez.', margin, footerY, {
-         width: contentWidth,
-         align: 'center'
-       });
-
-    if (total > 1) {
-      doc.fontSize(8)
-         .fillColor('#95a5a6')
-         .text(`Entrada ${index + 1} de ${total}`, margin, footerY + 15, {
-           width: contentWidth,
-           align: 'center'
-         });
-    }
-
-    doc.fontSize(7)
-       .fillColor('#bdc3c7')
-       .text(`Total pagado: $${parseFloat(compra.total).toFixed(2)} BOB`, margin, footerY + 25, {
-         width: contentWidth,
-         align: 'center'
-       });
-
-    // Agregar dominio "plustiket.com" con diseño - caso de error QR
-    const dominioBoxWidthError = 200; // Reducido de 220 a 200
-    const dominioBoxHeightError = 40; // Reducido de 50 a 40
-    const dominioBoxXError = (pageWidth - dominioBoxWidthError) / 2;
-    const dominioYError = footerY + 35; // Reducido de 50 a 35
-    
-    // Solo agregar si cabe en la página
-    if (dominioYError + dominioBoxHeightError < pageHeight - margin - 10) {
-      doc.rect(dominioBoxXError, dominioYError, dominioBoxWidthError, dominioBoxHeightError)
-         .fillColor('#f8f9fa')
-         .fill()
-         .strokeColor('#3498db')
-         .lineWidth(2)
-         .stroke();
-      
-      doc.fontSize(16) // Reducido de 20 a 16
-         .font('Helvetica-Bold')
-         .fillColor('#3498db')
-         .text('plustiket.com', dominioBoxXError, dominioYError + 10, {
-           width: dominioBoxWidthError,
-           align: 'center'
-         });
-      
-      doc.fontSize(8) // Reducido de 9 a 8
-         .font('Helvetica')
-         .fillColor('#7f8c8d')
-         .text('Tu plataforma de confianza', dominioBoxXError, dominioYError + 28, {
-           width: dominioBoxWidthError,
-           align: 'center'
-         });
-    }
   }
+
+  // Código alfanumérico vertical (lado derecho) - mostrar cada carácter en una línea
+  doc.fontSize(9)
+     .font('Helvetica-Bold')
+     .fillColor('#000000');
+  
+  // Mostrar código verticalmente (cada carácter en una nueva línea)
+  let charY = codigoY;
+  for (let i = 0; i < codigoBoleto.length; i++) {
+    doc.text(codigoBoleto[i], codigoX, charY);
+    charY += 12;
+  }
+
+  // Información del boleto (debajo del QR)
+  const infoY = qrY + qrSize + 10;
+  
+  // Tipo de boleto
+  let tipoBoleto = 'GENERAL';
+  if (asiento && asiento.tipo_precio_nombre) {
+    tipoBoleto = asiento.tipo_precio_nombre.toUpperCase();
+  } else if (mesa) {
+    tipoBoleto = 'MESA';
+  }
+
+  doc.fontSize(12)
+     .font('Helvetica-Bold')
+     .fillColor('#000000')
+     .text(tipoBoleto, startX, infoY, {
+       width: boletoWidth,
+       align: 'center'
+     });
+
+  // Precio
+  const precioTexto = precio ? `Bs. ${parseFloat(precio).toFixed(2)}` : 'Bs. 0.00';
+  doc.fontSize(11)
+     .font('Helvetica')
+     .fillColor('#000000')
+     .text(precioTexto, startX, infoY + 15, {
+       width: boletoWidth,
+       align: 'center'
+     });
+
+  // Asiento (si aplica)
+  if (asiento && asiento.numero_asiento) {
+    let asientoTexto = `Asiento: ${asiento.numero_asiento}`;
+    if (asiento.numero_mesa) {
+      asientoTexto = `Asiento: FILA ${asiento.numero_mesa}-${asiento.numero_asiento}`;
+    } else if (asiento.area_nombre) {
+      asientoTexto = `Asiento: ${asiento.area_nombre} - ${asiento.numero_asiento}`;
+    }
+    
+    doc.fontSize(9)
+       .font('Helvetica')
+       .fillColor('#000000')
+       .text(asientoTexto, startX, infoY + 30, {
+         width: boletoWidth,
+         align: 'center'
+       });
+  } else if (mesa && mesa.numero_mesa) {
+    doc.fontSize(9)
+       .font('Helvetica')
+       .fillColor('#000000')
+       .text(`Mesa: M${mesa.numero_mesa}`, startX, infoY + 30, {
+         width: boletoWidth,
+         align: 'center'
+       });
+  }
+
+  // Número de orden (código único de la compra)
+      doc.fontSize(8)
+     .font('Helvetica')
+     .fillColor('#666666')
+     .text(`Número de orden: ${compra.codigo_unico}`, startX, infoY + 45, {
+       width: boletoWidth,
+           align: 'center'
+         });
 };
 
 /**
- * Genera un PDF del boleto de entrada
+ * Genera la factura/comprobante (similar a la imagen)
+ */
+const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGenerales) => {
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const margin = 40;
+  const contentWidth = pageWidth - (margin * 2);
+
+  doc.addPage();
+
+  let yPos = margin;
+
+  // Encabezado de factura
+  doc.fontSize(14)
+     .font('Helvetica-Bold')
+     .fillColor('#000000')
+     .text('FACTURA CON DERECHO A CRÉDITO FISCAL', margin, yPos, {
+         width: contentWidth,
+         align: 'center'
+       });
+
+  yPos += 20;
+
+  doc.fontSize(12)
+     .font('Helvetica-Bold')
+     .text('FACTURA', margin, yPos);
+  
+  doc.fontSize(10)
+     .font('Helvetica')
+     .text('CASA MATRIZ', margin, yPos + 15);
+  
+  doc.fontSize(9)
+     .text('DENTRO DEL 1ER ANILLO ENTRE LAS CALLES REPUBLIQUETAS Y MONSEÑOR SALVATIERRA', margin, yPos + 28);
+  doc.text('SANTA CRUZ DE LA SIERRA', margin, yPos + 40);
+
+  // Información de factura (lado derecho)
+  const rightX = pageWidth - margin - 150;
+  doc.fontSize(9)
+     .font('Helvetica')
+     .text('NIT:', rightX, yPos);
+  doc.text('FACTURA', rightX + 30, yPos);
+
+  doc.text('FACTURA N°: 0', rightX, yPos + 15);
+  doc.text('CÓD. AUTORIZACIÓN:', rightX, yPos + 30);
+
+  // QR Code de la factura (esquina superior derecha)
+  try {
+    const facturaQRData = JSON.stringify({
+      tipo: 'factura',
+      compra_id: compra.id,
+      codigo_unico: compra.codigo_unico,
+      total: compra.total,
+      fecha: new Date().toISOString()
+    });
+
+    const qrImageBuffer = await QRCode.toBuffer(facturaQRData, {
+      errorCorrectionLevel: 'H',
+      type: 'png',
+      width: 80,
+      margin: 1
+    });
+
+    doc.image(qrImageBuffer, pageWidth - margin - 90, yPos, {
+      width: 80,
+      height: 80
+    });
+  } catch (qrError) {
+    console.error('Error al generar QR de factura:', qrError);
+  }
+
+  yPos += 60;
+
+  // Línea separadora
+  doc.moveTo(margin, yPos)
+     .lineTo(pageWidth - margin, yPos)
+     .strokeColor('#000000')
+     .lineWidth(0.5)
+     .stroke();
+
+  yPos += 15;
+
+  // Datos del cliente
+  doc.fontSize(9)
+     .font('Helvetica')
+     .text(`NOMBRE/RAZÓN SOCIAL: ${compra.cliente_nombre || 'SN'}`, margin, yPos);
+  
+  yPos += 12;
+  doc.text(`NIT/CI/CEX: ${compra.cliente_telefono || compra.cliente_email || '12345678'}`, margin, yPos);
+  
+  yPos += 12;
+  doc.text(`COD. CLIENTE:`, margin, yPos);
+  
+  yPos += 12;
+  const fechaEmision = new Date().toLocaleDateString('es-ES', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  doc.text(`FECHA DE EMISIÓN: ${fechaEmision}`, margin, yPos);
+
+  yPos += 20;
+
+  // Línea separadora
+  doc.moveTo(margin, yPos)
+     .lineTo(pageWidth - margin, yPos)
+     .strokeColor('#000000')
+     .lineWidth(0.5)
+         .stroke();
+
+  yPos += 15;
+
+  // Items de la compra
+  let totalItems = 0;
+
+  // Asientos
+  if (asientos && asientos.length > 0) {
+    asientos.forEach(asiento => {
+      const tipoPrecio = asiento.tipo_precio_nombre || 'Entrada';
+      const cantidad = 1;
+      const precioUnitario = parseFloat(asiento.precio || 0);
+      const subtotal = precioUnitario * cantidad;
+      totalItems += subtotal;
+
+      const itemText = `${evento.titulo || 'Evento'}`;
+      const detalleText = `${tipoPrecio} ${asiento.numero_asiento || ''}`;
+      
+      doc.fontSize(9)
+         .font('Helvetica')
+         .text(itemText, margin, yPos);
+      
+      yPos += 10;
+      doc.text(`${detalleText} ${cantidad} X ${precioUnitario.toFixed(2)}`, margin + 20, yPos);
+      
+      const subtotalText = subtotal.toFixed(2);
+      const subtotalWidth = doc.widthOfString(subtotalText, { fontSize: 9 });
+      doc.text(subtotalText, pageWidth - margin - subtotalWidth, yPos);
+      
+      yPos += 15;
+    });
+  }
+
+  // Mesas
+  if (mesas && mesas.length > 0) {
+    mesas.forEach(mesa => {
+      const cantidad = mesa.cantidad_sillas || 1;
+      const precioUnitario = parseFloat(mesa.precio_total || 0) / cantidad;
+      const subtotal = parseFloat(mesa.precio_total || 0);
+      totalItems += subtotal;
+
+      const itemText = `${evento.titulo || 'Evento'}`;
+      const detalleText = `Mesa ${mesa.numero_mesa} ${cantidad} X ${precioUnitario.toFixed(2)}`;
+      
+      doc.fontSize(9)
+         .font('Helvetica')
+         .text(itemText, margin, yPos);
+      
+      yPos += 10;
+      doc.text(detalleText, margin + 20, yPos);
+      
+      const subtotalText = subtotal.toFixed(2);
+      const subtotalWidth = doc.widthOfString(subtotalText, { fontSize: 9 });
+      doc.text(subtotalText, pageWidth - margin - subtotalWidth, yPos);
+      
+      yPos += 15;
+    });
+  }
+
+  // Entradas generales
+  if (entradasGenerales && entradasGenerales.length > 0) {
+    const precioUnitario = parseFloat(compra.total || 0) / entradasGenerales.length;
+    entradasGenerales.forEach((entrada, idx) => {
+      const subtotal = precioUnitario;
+      totalItems += subtotal;
+
+      const itemText = `${evento.titulo || 'Evento'}`;
+      const detalleText = `General ${idx + 1} X ${precioUnitario.toFixed(2)}`;
+      
+      doc.fontSize(9)
+         .font('Helvetica')
+         .text(itemText, margin, yPos);
+      
+      yPos += 10;
+      doc.text(detalleText, margin + 20, yPos);
+      
+      const subtotalText = subtotal.toFixed(2);
+      const subtotalWidth = doc.widthOfString(subtotalText, { fontSize: 9 });
+      doc.text(subtotalText, pageWidth - margin - subtotalWidth, yPos);
+      
+      yPos += 15;
+    });
+  }
+
+  // Si no hay items específicos, mostrar entrada general
+  if ((!asientos || asientos.length === 0) && 
+      (!mesas || mesas.length === 0) && 
+      (!entradasGenerales || entradasGenerales.length === 0)) {
+    const cantidad = compra.cantidad || 1;
+    const precioUnitario = parseFloat(compra.total || 0) / cantidad;
+    const subtotal = parseFloat(compra.total || 0);
+    totalItems = subtotal;
+
+    const itemText = `${evento.titulo || 'Evento'}`;
+    const detalleText = `General ${cantidad} X ${precioUnitario.toFixed(2)}`;
+    
+    doc.fontSize(9)
+       .font('Helvetica')
+       .text(itemText, margin, yPos);
+    
+    yPos += 10;
+    doc.text(detalleText, margin + 20, yPos);
+    
+    const subtotalText = subtotal.toFixed(2);
+    const subtotalWidth = doc.widthOfString(subtotalText, { fontSize: 9 });
+    doc.text(subtotalText, pageWidth - margin - subtotalWidth, yPos);
+    
+    yPos += 15;
+  }
+
+  yPos += 10;
+
+  // Línea separadora
+  doc.moveTo(margin, yPos)
+     .lineTo(pageWidth - margin, yPos)
+     .strokeColor('#000000')
+     .lineWidth(0.5)
+     .stroke();
+
+  yPos += 15;
+
+  // Totales
+  const subtotal = totalItems;
+  const descuento = 0;
+  const total = parseFloat(compra.total || 0);
+  const montoGiftCard = 0;
+  const montoAPagar = total;
+  const importeBaseCreditoFiscal = total;
+
+  doc.fontSize(9)
+     .font('Helvetica')
+     .text('SUBTOTAL Bs', margin, yPos);
+  const subtotalText = subtotal.toFixed(2);
+  const subtotalTextWidth = doc.widthOfString(subtotalText, { fontSize: 9 });
+  doc.text(subtotalText, pageWidth - margin - subtotalTextWidth, yPos);
+
+  yPos += 12;
+  doc.text('DESCUENTO Bs', margin, yPos);
+  doc.text('0.00', pageWidth - margin - 30, yPos);
+
+  yPos += 12;
+  doc.font('Helvetica-Bold')
+     .text('TOTAL Bs', margin, yPos);
+  doc.text(total.toFixed(2), pageWidth - margin - 30, yPos);
+
+  yPos += 12;
+  doc.font('Helvetica')
+     .text('MONTO GIFT CARD Bs', margin, yPos);
+  doc.text('0.00', pageWidth - margin - 30, yPos);
+
+  yPos += 12;
+  doc.font('Helvetica-Bold')
+     .text('MONTO A PAGAR Bs', margin, yPos);
+  doc.text(montoAPagar.toFixed(2), pageWidth - margin - 30, yPos);
+
+  yPos += 12;
+  doc.font('Helvetica')
+     .text('IMPORTE BASE CRÉDITO FISCAL Bs', margin, yPos);
+  doc.text(importeBaseCreditoFiscal.toFixed(2), pageWidth - margin - 30, yPos);
+
+  yPos += 15;
+
+  // Monto en palabras
+  const numeroEnPalabras = convertirNumeroAPalabras(montoAPagar);
+    doc.fontSize(8)
+       .font('Helvetica')
+     .text(`Son: ${numeroEnPalabras} 00/100 bolivianos`, margin, yPos, {
+       width: contentWidth
+     });
+
+  yPos += 20;
+
+  // Línea separadora
+  doc.moveTo(margin, yPos)
+     .lineTo(pageWidth - margin, yPos)
+     .strokeColor('#000000')
+     .lineWidth(0.5)
+     .stroke();
+
+  yPos += 15;
+
+  // Textos legales
+  doc.fontSize(7)
+     .font('Helvetica')
+     .fillColor('#000000')
+     .text('"ESTA FACTURA CONTRIBUYE AL DESARROLLO DEL PAÍS, EL USO ILÍCITO DE ÉSTA SERÁ SANCIONADO DE ACUERDO A LEY"', margin, yPos, {
+         width: contentWidth,
+         align: 'center'
+       });
+
+  yPos += 12;
+  doc.text('Ley N° 453: El proveedor debe exhibir certificaciones de habilitación o documentos que acrediten las capacidades u ofertas de servicios especializados', margin, yPos, {
+           width: contentWidth,
+           align: 'center'
+         });
+
+  yPos += 12;
+  doc.text('"Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea"', margin, yPos, {
+         width: contentWidth,
+         align: 'center'
+       });
+};
+
+/**
+ * Convierte un número a palabras (versión simplificada)
+ */
+const convertirNumeroAPalabras = (numero) => {
+  const unidades = ['', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'];
+  const decenas = ['', '', 'veinte', 'treinta', 'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa'];
+  const especiales = ['diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete', 'dieciocho', 'diecinueve'];
+  
+  if (numero === 0) return 'cero';
+  if (numero < 10) return unidades[Math.floor(numero)];
+  if (numero < 20) return especiales[Math.floor(numero) - 10];
+  if (numero < 100) {
+    const decena = Math.floor(numero / 10);
+    const unidad = Math.floor(numero % 10);
+    if (unidad === 0) return decenas[decena];
+    return `${decenas[decena]} y ${unidades[unidad]}`;
+  }
+  if (numero < 1000) {
+    const centena = Math.floor(numero / 100);
+    const resto = numero % 100;
+    if (centena === 1) {
+      return resto === 0 ? 'cien' : `ciento ${convertirNumeroAPalabras(resto)}`;
+    }
+    return `${unidades[centena]}cientos ${resto > 0 ? convertirNumeroAPalabras(resto) : ''}`;
+  }
+  if (numero < 1000000) {
+    const miles = Math.floor(numero / 1000);
+    const resto = numero % 1000;
+    if (miles === 1) {
+      return `mil ${resto > 0 ? convertirNumeroAPalabras(resto) : ''}`;
+    }
+    return `${convertirNumeroAPalabras(miles)} mil ${resto > 0 ? convertirNumeroAPalabras(resto) : ''}`;
+  }
+  return numero.toString();
+};
+
+/**
+ * Genera un PDF del boleto de entrada con nuevo diseño compacto
  * @param {Object} compra - Datos de la compra
  * @param {Object} evento - Datos del evento
  * @param {Array} asientos - Array de asientos
@@ -523,38 +612,71 @@ export const generarBoletoPDF = async (compra, evento, asientos = [], mesas = []
       // Calcular total de entradas
       const totalEntradas = asientos.length + mesas.length + entradasGenerales.length || (compra.cantidad || 1);
 
-      // Si hay múltiples entradas, generar un boleto por página
-      if (totalEntradas > 1) {
-        // Generar boleto para cada asiento
+      // Generar boletos individuales
+      let globalIndex = 0;
+      const boletoHeight = 200;
+      const margin = 20;
+      const boletoSpacing = boletoHeight + margin * 2;
+      
+      // Asientos
         for (let i = 0; i < asientos.length; i++) {
-          if (i > 0) {
+        // Calcular posición Y
+        let currentY = margin + (globalIndex * boletoSpacing);
+        
+        // Si no cabe en la página, crear nueva página
+        if (currentY + boletoHeight > 842 - margin) {
             doc.addPage();
-          }
-          await generarBoletoIndividual(doc, compra, evento, asientos[i], null, null, i, totalEntradas);
+          currentY = margin;
+          globalIndex = 0; // Reiniciar índice en nueva página
         }
-
-        // Generar boleto para cada mesa
-        for (let i = 0; i < mesas.length; i++) {
-          if (asientos.length > 0 || i > 0) {
-            doc.addPage();
-          }
-          await generarBoletoIndividual(doc, compra, evento, null, mesas[i], null, asientos.length + i, totalEntradas);
-        }
-
-        // Generar boleto para cada entrada general
-        for (let i = 0; i < entradasGenerales.length; i++) {
-          if (asientos.length > 0 || mesas.length > 0 || i > 0) {
-            doc.addPage();
-          }
-          await generarBoletoIndividual(doc, compra, evento, null, null, entradasGenerales[i], asientos.length + mesas.length + i, totalEntradas);
-        }
-      } else {
-        // Si solo hay una entrada, generar un solo boleto en una página
-        const asiento = asientos.length > 0 ? asientos[0] : null;
-        const mesa = mesas.length > 0 ? mesas[0] : null;
-        const entradaGeneral = entradasGenerales.length > 0 ? entradasGenerales[0] : null;
-        await generarBoletoIndividual(doc, compra, evento, asiento, mesa, entradaGeneral, 0, totalEntradas);
+        
+        const precio = parseFloat(asientos[i].precio || 0);
+        await generarBoletoIndividual(doc, compra, evento, asientos[i], null, null, globalIndex, totalEntradas, precio, currentY);
+        globalIndex++;
       }
+
+      // Mesas
+        for (let i = 0; i < mesas.length; i++) {
+        // Calcular posición Y
+        let currentY = margin + (globalIndex * boletoSpacing);
+        
+        // Si no cabe en la página, crear nueva página
+        if (currentY + boletoHeight > 842 - margin) {
+            doc.addPage();
+          currentY = margin;
+          globalIndex = 0; // Reiniciar índice en nueva página
+        }
+        
+        const precio = parseFloat(mesas[i].precio_total || 0) / (mesas[i].cantidad_sillas || 1);
+        await generarBoletoIndividual(doc, compra, evento, null, mesas[i], null, globalIndex, totalEntradas, precio, currentY);
+        globalIndex++;
+      }
+
+      // Entradas generales
+        for (let i = 0; i < entradasGenerales.length; i++) {
+        // Calcular posición Y
+        let currentY = margin + (globalIndex * boletoSpacing);
+        
+        // Si no cabe en la página, crear nueva página
+        if (currentY + boletoHeight > 842 - margin) {
+            doc.addPage();
+          currentY = margin;
+          globalIndex = 0; // Reiniciar índice en nueva página
+        }
+        
+        const precio = parseFloat(compra.total || 0) / totalEntradas;
+        await generarBoletoIndividual(doc, compra, evento, null, null, entradasGenerales[i], globalIndex, totalEntradas, precio, currentY);
+        globalIndex++;
+      }
+
+      // Si no hay entradas específicas, generar un boleto general
+      if (totalEntradas === 0 || (asientos.length === 0 && mesas.length === 0 && entradasGenerales.length === 0)) {
+        const precio = parseFloat(compra.total || 0) / (compra.cantidad || 1);
+        await generarBoletoIndividual(doc, compra, evento, null, null, null, 0, 1, precio, margin);
+      }
+
+      // Generar factura/comprobante al final
+      await generarFactura(doc, compra, evento, asientos, mesas, entradasGenerales);
 
       // Finalizar PDF
       doc.end();
