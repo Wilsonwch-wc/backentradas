@@ -627,38 +627,103 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
     let errorOcurrido = null;
     
     try {
-      // Intentar enviar el PDF directamente
-      console.log(`⏳ Enviando PDF...`);
+      // Intentar enviar el PDF directamente usando el método estándar
+      console.log(`⏳ Enviando PDF a ${numeroFormateado}...`);
       
+      // Crear una promesa que capture el resultado antes del error
+      let resultadoEnvio = null;
+      let errorEnEnvio = null;
+      
+      // Usar un enfoque que capture el resultado incluso si hay un error después
+      const sendPromise = client.sendMessage(numeroFormateado, media, { caption: captionParaPDF })
+        .then((result) => {
+          resultadoEnvio = result;
+          return result;
+        })
+        .catch((err) => {
+          errorEnEnvio = err;
+          // Si el error es de markedUnread, no lanzar todavía - verificar si el mensaje se envió
+          if (err.message?.includes('markedUnread') || 
+              err.message?.includes('sendSeen') ||
+              err.message?.includes('Evaluation failed')) {
+            // No lanzar el error, solo guardarlo para verificar después
+            return null;
+          }
+          // Para otros errores, lanzar normalmente
+          throw err;
+        });
+      
+      // Esperar a que se complete (puede retornar null si hay error de markedUnread)
       try {
-        // Enviar el mensaje directamente
-        mensajeEnviado = await client.sendMessage(numeroFormateado, media, { caption: captionParaPDF });
-        console.log(`✅ PDF enviado exitosamente`);
-        
-        const mensajeId = mensajeEnviado.id?._serialized || mensajeEnviado.id?.id || (typeof mensajeEnviado.id === 'string' ? mensajeEnviado.id : JSON.stringify(mensajeEnviado.id)) || 'ID disponible';
+        resultadoEnvio = await Promise.race([
+          sendPromise,
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout: El envío tardó demasiado')), 60000)
+          )
+        ]);
+      } catch (timeoutErr) {
+        if (!timeoutErr.message.includes('Timeout')) {
+          throw timeoutErr;
+        }
+        errorEnEnvio = timeoutErr;
+      }
+      
+      // Si tenemos resultado, el mensaje se envió exitosamente
+      if (resultadoEnvio && resultadoEnvio.id) {
+        const mensajeId = resultadoEnvio.id?._serialized || resultadoEnvio.id?.id || (typeof resultadoEnvio.id === 'string' ? resultadoEnvio.id : JSON.stringify(resultadoEnvio.id)) || 'ID disponible';
         console.log(`✅ PDF enviado exitosamente. ID del mensaje: ${mensajeId}`);
         return {
           success: true,
           message: 'PDF enviado exitosamente por WhatsApp Web',
           telefono: telefono
         };
-      } catch (sendErr) {
-        // Si el error es solo de markedUnread/sendSeen, asumir que el mensaje se envió
-        // porque el error ocurre DESPUÉS del envío
-        if (sendErr.message?.includes('markedUnread') || 
-            sendErr.message?.includes('sendSeen') ||
-            sendErr.message?.includes('Evaluation failed')) {
-          console.log(`⚠️ Error de markedUnread/sendSeen después del envío - asumiendo que el PDF se envió correctamente`);
-          console.log(`ℹ️ Este error ocurre después de enviar el mensaje, el PDF debería haberse enviado`);
-          return {
-            success: true,
-            message: 'PDF enviado exitosamente por WhatsApp Web',
-            telefono: telefono,
-            warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
-          };
+      }
+      
+      // Si hay error de markedUnread, esperar y verificar en el chat
+      if (errorEnEnvio && (errorEnEnvio.message?.includes('markedUnread') || 
+          errorEnEnvio.message?.includes('sendSeen') ||
+          errorEnEnvio.message?.includes('Evaluation failed'))) {
+        console.log(`⚠️ Error de markedUnread/sendSeen detectado. Esperando y verificando en el chat...`);
+        // Esperar más tiempo para que el mensaje se procese
+        await new Promise(resolve => setTimeout(resolve, 10000)); // 10 segundos
+        
+        try {
+          const chat = await client.getChatById(numeroFormateado);
+          const messages = await chat.fetchMessages({ limit: 20 });
+          console.log(`📋 Total de mensajes encontrados: ${messages.length}`);
+          
+          // Buscar el mensaje más reciente con media que sea un documento
+          const ultimoMensaje = messages.find(m => {
+            const mensajeTimestamp = m.timestamp ? m.timestamp * 1000 : 0;
+            const esReciente = mensajeTimestamp >= timestampAntesEnvio - 180000; // 3 minutos de margen
+            const esDocumento = (m.type === 'document' || m.type === 'ptt') && m.fromMe && m.hasMedia;
+            console.log(`🔍 Mensaje: fromMe=${m.fromMe}, hasMedia=${m.hasMedia}, tipo=${m.type}, timestamp=${mensajeTimestamp} (${new Date(mensajeTimestamp).toISOString()}), esReciente=${esReciente}, esDocumento=${esDocumento}`);
+            return esDocumento && esReciente;
+          });
+          
+          if (ultimoMensaje) {
+            const mensajeId = ultimoMensaje.id?._serialized || ultimoMensaje.id?.id || (typeof ultimoMensaje.id === 'string' ? ultimoMensaje.id : JSON.stringify(ultimoMensaje.id)) || 'ID disponible';
+            console.log(`✅ Mensaje encontrado en el chat después del error! ID: ${mensajeId}`);
+            console.log(`📋 Tipo: ${ultimoMensaje.type}, Timestamp: ${ultimoMensaje.timestamp}`);
+            return {
+              success: true,
+              message: 'PDF enviado exitosamente por WhatsApp Web',
+              telefono: telefono,
+              warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
+            };
+          } else {
+            console.error(`❌ No se encontró ningún mensaje reciente con media en el chat después de 10 segundos`);
+            throw new Error('El PDF no se envió. El error de markedUnread ocurrió antes del envío.');
+          }
+        } catch (checkError) {
+          console.error('❌ Error al verificar el mensaje en el chat:', checkError.message);
+          throw new Error('El PDF no se envió. No se pudo verificar en el chat.');
         }
-        // Para otros errores, lanzar normalmente
-        throw sendErr;
+      } else if (errorEnEnvio) {
+        // Si hay otro tipo de error, lanzarlo
+        throw errorEnEnvio;
+      } else {
+        throw new Error('El PDF no se envió correctamente: no se recibió confirmación');
       }
       
       // Verificar que el mensaje realmente se envió (debe tener un ID)
