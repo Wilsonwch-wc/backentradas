@@ -161,23 +161,28 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     yPos += 10;
   }
 
-  // 5. LOGO "plustiket" (al final, centrado)
+  // 5. LOGO "plustiket" (al final, centrado, llamativo)
   const logoText = 'plus';
   const logoText2 = 'tiket';
-  const logoWidth = doc.widthOfString(logoText, { fontSize: 10, font: 'Helvetica-Bold' });
-  const logoWidth2 = doc.widthOfString(logoText2, { fontSize: 10, font: 'Helvetica-Bold' });
-  const totalLogoWidth = logoWidth + logoWidth2;
+  const fontSize = 13; // Tamaño más grande para que sea más llamativo
+  const spacing = 3; // Espacio entre "plus" y "tiket" para que no choquen
+  
+  const logoWidth = doc.widthOfString(logoText, { fontSize: fontSize, font: 'Helvetica-Bold' });
+  const logoWidth2 = doc.widthOfString(logoText2, { fontSize: fontSize, font: 'Helvetica-Bold' });
+  const totalLogoWidth = logoWidth + logoWidth2 + spacing;
   const logoX = (ticketWidth - totalLogoWidth) / 2;
 
-  doc.fontSize(10)
+  // "plus" en negro
+  doc.fontSize(fontSize)
      .font('Helvetica-Bold')
      .fillColor('#000000')
      .text(logoText, logoX, yPos);
   
-  doc.fontSize(10)
+  // "tiket" en amarillo dorado brillante y llamativo
+  doc.fontSize(fontSize)
      .font('Helvetica-Bold')
-     .fillColor('#E74C3C') // Rojo para "tiket"
-     .text(logoText2, logoX + logoWidth, yPos);
+     .fillColor('#FFC107') // Amarillo dorado brillante y llamativo
+     .text(logoText2, logoX + logoWidth + spacing, yPos);
 
   yPos += 12;
 
