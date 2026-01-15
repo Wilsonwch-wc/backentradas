@@ -161,18 +161,18 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     yPos += 10;
   }
 
-  // 5. LOGO "plustiket" (al final, centrado, llamativo)
-  // Calcular el ancho exacto de cada parte para que se vea continuo y claro
+  // 5. LOGO "plustiket" (al final, centrado, llamativo, con espacio para claridad)
   const fontSize = 13;
   const logoPart1 = 'plus';
   const logoPart2 = 'tiket';
+  const spacing = 3; // Espacio pequeño entre "plus" y "tiket" para que se vean claramente separados
   
   // Calcular ancho de cada parte
   const width1 = doc.widthOfString(logoPart1, { fontSize: fontSize, font: 'Helvetica-Bold' });
   const width2 = doc.widthOfString(logoPart2, { fontSize: fontSize, font: 'Helvetica-Bold' });
   
-  // Calcular posición para centrar el logo completo
-  const totalWidth = width1 + width2;
+  // Calcular posición para centrar el logo completo (incluyendo el espacio)
+  const totalWidth = width1 + width2 + spacing;
   const startX = (ticketWidth - totalWidth) / 2;
 
   // "plus" en negro
@@ -181,11 +181,11 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
      .fillColor('#000000')
      .text(logoPart1, startX, yPos);
   
-  // "tiket" en amarillo, inmediatamente después de "plus" (sin espacio, sin solapamiento)
+  // "tiket" en amarillo, con espacio después de "plus" para que se vean claramente separados
   doc.fontSize(fontSize)
      .font('Helvetica-Bold')
      .fillColor('#FFC107') // Amarillo dorado brillante
-     .text(logoPart2, startX + width1, yPos);
+     .text(logoPart2, startX + width1 + spacing, yPos);
 
   yPos += 12;
 
