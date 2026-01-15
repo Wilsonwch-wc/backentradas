@@ -376,10 +376,11 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
  * Envía un PDF por WhatsApp Web
  * @param {string} telefono - Número de teléfono del cliente
  * @param {string} pdfPath - Ruta del archivo PDF
- * @param {string} mensaje - Mensaje a enviar junto con el PDF
+ * @param {string} mensajeTexto - Mensaje de texto a enviar primero (para verificar el número)
+ * @param {string} mensajeCaption - Mensaje a usar como caption del PDF (opcional, usa mensajeTexto si no se proporciona)
  * @returns {Promise<Object>} - Resultado del envío
  */
-export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') => {
+export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = '', mensajeCaption = '') => {
   try {
     // Verificar que el cliente esté listo y realmente conectado
     if (!client) {
@@ -460,11 +461,30 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
       console.warn('⚠️ No se pudo verificar el número, pero continuando con el envío...');
     }
 
-    // Enviar el PDF con el mensaje como caption
+    // PRIMERO: Enviar un mensaje de texto para verificar que el número esté disponible
+    console.log(`📤 Paso 1: Enviando mensaje de texto a ${numeroFormateado}...`);
+    const textoParaEnviar = mensajeTexto || '✅ Su compra se realizó correctamente. Estos son sus boletos:';
+    
+    try {
+      const resultadoTexto = await enviarMensajePorWhatsAppWeb(telefono, textoParaEnviar);
+      if (!resultadoTexto.success) {
+        console.error(`❌ Error al enviar mensaje de texto: ${resultadoTexto.message}`);
+        throw new Error(`No se pudo enviar el mensaje de texto: ${resultadoTexto.message}`);
+      }
+      console.log(`✅ Mensaje de texto enviado exitosamente`);
+      // Esperar un momento antes de enviar el PDF
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    } catch (textError) {
+      console.error(`❌ Error al enviar mensaje de texto: ${textError.message}`);
+      throw new Error(`No se pudo verificar el número. Error: ${textError.message}`);
+    }
+
+    // SEGUNDO: Enviar el PDF con el mensaje como caption
     // Agregar timeout para evitar que se quede colgado
-    console.log(`📤 Intentando enviar PDF a ${numeroFormateado}...`);
+    console.log(`📤 Paso 2: Intentando enviar PDF a ${numeroFormateado}...`);
     console.log(`📄 Tamaño del PDF: ${media.length} bytes`);
-    console.log(`💬 Mensaje: ${mensaje.substring(0, 50)}...`);
+    const captionParaPDF = mensajeCaption || mensajeTexto || '';
+    console.log(`💬 Caption: ${captionParaPDF.substring(0, 50)}...`);
     
     // Obtener timestamp antes de enviar para verificar que el mensaje encontrado sea el correcto
     const timestampAntesEnvio = Date.now();
@@ -474,7 +494,7 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
     
     try {
       // Intentar enviar el mensaje
-      const sendPromise = client.sendMessage(numeroFormateado, media, { caption: mensaje });
+      const sendPromise = client.sendMessage(numeroFormateado, media, { caption: captionParaPDF });
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => reject(new Error('Timeout: El envío tardó demasiado')), 60000); // 60 segundos
       });

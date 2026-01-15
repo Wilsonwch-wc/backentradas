@@ -2303,22 +2303,29 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
       minute: '2-digit'
     }) : 'Fecha no disponible';
 
-    // Crear mensaje personalizado
-    const mensaje = `✅✅✅ *GRACIAS POR TU COMPRA* ✅✅✅\n\n` +
-      `*TU COMPROBANTE FUE PROCESADO CORRECTAMENTE*\n\n` +
+    // Crear mensaje de texto (se enviará primero para verificar el número)
+    const mensajeTexto = `✅✅✅ *GRACIAS POR TU COMPRA* ✅✅✅\n\n` +
+      `*TU COMPRA SE REALIZÓ CORRECTAMENTE*\n\n` +
       `Hola *${compra.cliente_nombre}*,\n\n` +
       `📅 *Evento:* ${compra.evento_titulo}\n` +
       `📆 *Fecha:* ${fechaEvento}\n` +
       `🎟️ *Cantidad:* ${compra.cantidad} entrada(s)\n` +
       `💰 *Total:* $${parseFloat(compra.total).toFixed(2)} BOB\n` +
       `🔑 *Código:* ${compra.codigo_unico}\n\n` +
+      `📎 *Estos son sus boletos:*\n\n` +
       `¡Esperamos verte en el evento! 🎉`;
+    
+    // Mensaje más corto para el caption del PDF
+    const mensajeCaption = `🎟️ *Boletos para: ${compra.evento_titulo}*\n` +
+      `📆 ${fechaEvento}\n` +
+      `🔑 Código: ${compra.codigo_unico}`;
 
-    // Enviar el PDF por WhatsApp Web
+    // Enviar el PDF por WhatsApp Web (el servicio enviará primero el mensaje de texto)
     const resultado = await enviarPDFWhatsAppWebService(
       compra.cliente_telefono,
       pdfPathCompleto,
-      mensaje
+      mensajeTexto,  // Mensaje completo para el texto inicial
+      mensajeCaption // Caption más corto para el PDF
     );
 
     if (resultado.success) {
