@@ -463,6 +463,12 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
     // Enviar el PDF con el mensaje como caption
     // Agregar timeout para evitar que se quede colgado
     console.log(`📤 Intentando enviar PDF a ${numeroFormateado}...`);
+    console.log(`📄 Tamaño del PDF: ${media.length} bytes`);
+    console.log(`💬 Mensaje: ${mensaje.substring(0, 50)}...`);
+    
+    // Obtener timestamp antes de enviar para verificar que el mensaje encontrado sea el correcto
+    const timestampAntesEnvio = Date.now();
+    console.log(`⏰ Timestamp antes del envío: ${timestampAntesEnvio} (${new Date(timestampAntesEnvio).toISOString()})`);
     let mensajeEnviado = null;
     let errorOcurrido = null;
     
@@ -473,30 +479,48 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
         setTimeout(() => reject(new Error('Timeout: El envío tardó demasiado')), 60000); // 60 segundos
       });
 
-      // Usar Promise.allSettled para capturar el resultado incluso si hay un error
+      // Intentar enviar el mensaje
       try {
+        console.log(`⏳ Esperando respuesta del envío...`);
         mensajeEnviado = await Promise.race([sendPromise, timeoutPromise]);
+        console.log(`✅ Promesa de envío completada. Mensaje recibido:`, mensajeEnviado ? 'Sí' : 'No');
       } catch (raceError) {
         errorOcurrido = raceError;
+        console.error(`❌ Error durante el envío: ${raceError.message}`);
+        
         // Si el error es de markedUnread, intentar obtener el mensaje de otra forma
         if (raceError.message?.includes('markedUnread') || 
             raceError.message?.includes('sendSeen') ||
             raceError.message?.includes('Evaluation failed')) {
+          console.log(`⚠️ Error de markedUnread/sendSeen detectado. Verificando si el mensaje se envió...`);
           // Esperar un momento para que el mensaje se procese
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise(resolve => setTimeout(resolve, 3000));
           // Intentar obtener el mensaje del resultado de la promesa si está disponible
           try {
             // El mensaje puede haberse enviado antes del error de sendSeen
             const chat = await client.getChatById(numeroFormateado);
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            const messages = await chat.fetchMessages({ limit: 5 });
-            const ultimoMensaje = messages.find(m => m.fromMe && m.hasMedia);
-            if (ultimoMensaje && ultimoMensaje.id) {
+            const messages = await chat.fetchMessages({ limit: 10 });
+            console.log(`📋 Total de mensajes encontrados: ${messages.length}`);
+            
+            // Buscar mensaje reciente que tenga media
+            const ultimoMensaje = messages.find(m => {
+              const mensajeTimestamp = m.timestamp ? m.timestamp * 1000 : 0;
+              const esReciente = mensajeTimestamp >= timestampAntesEnvio - 30000; // 30 segundos de margen
+              console.log(`🔍 Mensaje: fromMe=${m.fromMe}, hasMedia=${m.hasMedia}, tipo=${m.type}, timestamp=${mensajeTimestamp}, esReciente=${esReciente}`);
+              return m.fromMe && m.hasMedia && esReciente;
+            });
+            
+            if (ultimoMensaje) {
               mensajeEnviado = ultimoMensaje;
-              console.log(`✅ Mensaje encontrado después del error de sendSeen. ID: ${ultimoMensaje.id}`);
+              const mensajeId = ultimoMensaje.id?._serialized || ultimoMensaje.id?.id || (typeof ultimoMensaje.id === 'string' ? ultimoMensaje.id : JSON.stringify(ultimoMensaje.id)) || 'ID disponible';
+              console.log(`✅ Mensaje encontrado después del error de sendSeen. ID: ${mensajeId}`);
+              console.log(`📋 Tipo de mensaje: ${ultimoMensaje.type}, Tiene media: ${ultimoMensaje.hasMedia}, Timestamp: ${ultimoMensaje.timestamp}`);
+            } else {
+              console.error(`❌ No se encontró ningún mensaje reciente con media en el chat`);
             }
           } catch (checkError) {
-            console.warn('⚠️ No se pudo verificar el mensaje:', checkError.message);
+            console.error('❌ Error al verificar el mensaje:', checkError.message);
+            console.error('❌ Stack:', checkError.stack);
           }
         } else {
           throw raceError;
@@ -504,8 +528,16 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
       }
       
       // Verificar que el mensaje realmente se envió (debe tener un ID)
-      if (mensajeEnviado && mensajeEnviado.id) {
-        console.log(`✅ PDF enviado exitosamente. ID del mensaje: ${mensajeEnviado.id}`);
+      if (mensajeEnviado) {
+        // El ID puede ser un objeto, obtener el ID serializado
+        const mensajeId = mensajeEnviado.id?._serialized || mensajeEnviado.id?.id || (typeof mensajeEnviado.id === 'string' ? mensajeEnviado.id : JSON.stringify(mensajeEnviado.id)) || 'ID disponible';
+        console.log(`✅ PDF enviado exitosamente. ID del mensaje: ${mensajeId}`);
+        console.log(`📋 Detalles del mensaje enviado:`, {
+          tieneMedia: mensajeEnviado.hasMedia,
+          fromMe: mensajeEnviado.fromMe,
+          tipo: mensajeEnviado.type,
+          timestamp: mensajeEnviado.timestamp
+        });
         return {
           success: true,
           message: 'PDF enviado exitosamente por WhatsApp Web',
@@ -518,20 +550,40 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
           errorOcurrido.message?.includes('sendSeen') ||
           errorOcurrido.message?.includes('Evaluation failed'))) {
         console.log('🔍 Verificando si el mensaje se envió realmente consultando el chat...');
+        console.log(`⏰ Timestamp antes del envío: ${timestampAntesEnvio} (${new Date(timestampAntesEnvio).toISOString()})`);
         try {
           const chat = await client.getChatById(numeroFormateado);
           await new Promise(resolve => setTimeout(resolve, 3000));
           const messages = await chat.fetchMessages({ limit: 10 });
-          const ultimoMensaje = messages.find(m => m.fromMe && m.hasMedia);
+          console.log(`📋 Total de mensajes en el chat: ${messages.length}`);
           
-          if (ultimoMensaje && ultimoMensaje.id) {
-            console.log(`✅ Mensaje encontrado en el chat! ID: ${ultimoMensaje.id}`);
+          // Buscar mensaje reciente (enviado después del timestamp) que tenga media
+          const ultimoMensaje = messages.find(m => {
+            const mensajeTimestamp = m.timestamp ? m.timestamp * 1000 : 0; // Convertir a milisegundos
+            const esReciente = mensajeTimestamp >= timestampAntesEnvio - 30000; // 30 segundos de margen
+            console.log(`🔍 Mensaje: fromMe=${m.fromMe}, hasMedia=${m.hasMedia}, tipo=${m.type}, timestamp=${mensajeTimestamp} (${new Date(mensajeTimestamp).toISOString()}), esReciente=${esReciente}`);
+            return m.fromMe && m.hasMedia && esReciente;
+          });
+          
+          if (ultimoMensaje) {
+            // El ID puede ser un objeto, obtener el ID serializado
+            const mensajeId = ultimoMensaje.id?._serialized || ultimoMensaje.id?.id || (typeof ultimoMensaje.id === 'string' ? ultimoMensaje.id : JSON.stringify(ultimoMensaje.id)) || 'ID disponible';
+            console.log(`✅ Mensaje encontrado en el chat! ID: ${mensajeId}`);
+            console.log(`📋 Detalles del mensaje:`, {
+              tieneMedia: ultimoMensaje.hasMedia,
+              fromMe: ultimoMensaje.fromMe,
+              timestamp: ultimoMensaje.timestamp,
+              tipo: ultimoMensaje.type,
+              mimetype: ultimoMensaje.mimetype || 'N/A'
+            });
             return {
               success: true,
               message: 'PDF enviado exitosamente por WhatsApp Web',
               telefono: telefono,
               warning: 'El PDF se envió pero hubo un problema menor al marcarlo como visto'
             };
+          } else {
+            console.error(`❌ No se encontró ningún mensaje reciente con media después del timestamp ${timestampAntesEnvio}`);
           }
         } catch (verifyError) {
           console.error('❌ Error al verificar mensaje en el chat:', verifyError.message);
@@ -557,10 +609,23 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensaje = '') =
           const chat = await client.getChatById(numeroFormateado);
           await new Promise(resolve => setTimeout(resolve, 4000));
           const messages = await chat.fetchMessages({ limit: 10 });
-          const ultimoMensaje = messages.find(m => m.fromMe && m.hasMedia);
+          // Buscar mensaje reciente (enviado después del timestamp) que tenga media
+          const ultimoMensaje = messages.find(m => {
+            const mensajeTimestamp = m.timestamp ? m.timestamp * 1000 : 0; // Convertir a milisegundos
+            return m.fromMe && m.hasMedia && mensajeTimestamp >= timestampAntesEnvio - 10000; // 10 segundos de margen
+          });
           
-          if (ultimoMensaje && ultimoMensaje.id) {
-            console.log(`✅ Mensaje encontrado en verificación final! ID: ${ultimoMensaje.id}`);
+          if (ultimoMensaje) {
+            // El ID puede ser un objeto, obtener el ID serializado
+            const mensajeId = ultimoMensaje.id?._serialized || ultimoMensaje.id?.id || (typeof ultimoMensaje.id === 'string' ? ultimoMensaje.id : JSON.stringify(ultimoMensaje.id)) || 'ID disponible';
+            console.log(`✅ Mensaje encontrado en verificación final! ID: ${mensajeId}`);
+            console.log(`📋 Detalles del mensaje:`, {
+              tieneMedia: ultimoMensaje.hasMedia,
+              fromMe: ultimoMensaje.fromMe,
+              timestamp: ultimoMensaje.timestamp,
+              tipo: ultimoMensaje.type,
+              body: ultimoMensaje.body?.substring(0, 50) || 'Sin body'
+            });
             return {
               success: true,
               message: 'PDF enviado exitosamente por WhatsApp Web',
