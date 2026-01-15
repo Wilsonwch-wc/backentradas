@@ -14,36 +14,25 @@ const __dirname = path.dirname(__filename);
  */
 const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entradaGeneral, index, total, precio) => {
   // Dimensiones para ticket térmico 80mm (aproximadamente 226 puntos a 72 DPI)
-  // Usaremos un ancho de 80mm = 226.77 puntos
   const ticketWidth = doc.page.width || 226.77; // 80mm en puntos
   const margin = 10;
   const contentWidth = ticketWidth - (margin * 2);
   
   let yPos = margin;
 
-  // Logo "plustiket" (arriba a la izquierda)
-  doc.fontSize(12)
-     .font('Helvetica-Bold')
-     .fillColor('#000000')
-     .text('plus', margin, yPos);
-  
-  const plusWidth = doc.widthOfString('plus', { fontSize: 12, font: 'Helvetica-Bold' });
-  doc.fontSize(12)
-     .font('Helvetica-Bold')
-     .fillColor('#E74C3C') // Rojo para "tiket"
-     .text('tiket', margin + plusWidth, yPos);
-
-  // Nombre del evento (centrado, arriba)
+  // 1. TÍTULO DEL EVENTO (arriba, centrado)
   const eventoNombre = (evento.titulo || 'Evento').toUpperCase();
-  const eventoWidth = doc.widthOfString(eventoNombre, { fontSize: 11, font: 'Helvetica-Bold' });
   doc.fontSize(11)
      .font('Helvetica-Bold')
      .fillColor('#000000')
-     .text(eventoNombre, (ticketWidth - eventoWidth) / 2, yPos);
+     .text(eventoNombre, margin, yPos, {
+       width: contentWidth,
+       align: 'center'
+     });
 
-  yPos += 16;
+  yPos += 14;
 
-  // Fecha y hora (centrado)
+  // 2. FECHA Y HORA (debajo del título, centrado)
   const fechaEvento = evento.hora_inicio 
     ? new Date(evento.hora_inicio).toLocaleDateString('es-ES', {
         year: 'numeric',
@@ -61,23 +50,20 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     : 'Hora no disponible';
 
   const fechaHora = `${fechaEvento} - ${horaEvento}`;
-  const fechaHoraWidth = doc.widthOfString(fechaHora, { fontSize: 8, font: 'Helvetica' });
   doc.fontSize(8)
      .font('Helvetica')
      .fillColor('#000000')
-     .text(fechaHora, (ticketWidth - fechaHoraWidth) / 2, yPos);
+     .text(fechaHora, margin, yPos, {
+       width: contentWidth,
+       align: 'center'
+     });
 
   yPos += 12;
 
-  // Sección principal: QR a la izquierda, código de compra vertical a la derecha
-  const qrSize = 70; // QR más pequeño para ticket compacto
-  const qrX = margin;
-  const qrY = yPos;
+  // 3. QR CODE (en el medio, centrado)
+  const qrSize = 80; // Tamaño del QR
+  const qrX = (ticketWidth - qrSize) / 2; // Centrar el QR
   
-  // Área derecha para código de compra vertical
-  const rightAreaX = margin + qrSize + 8;
-  const rightAreaWidth = contentWidth - qrSize - 8;
-
   // Código de escaneo para el QR
   const codigoEscaneo = (asiento && asiento.codigo_escaneo) 
     ? asiento.codigo_escaneo 
@@ -105,7 +91,7 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
       margin: 1
     });
     
-    doc.image(qrImageBuffer, qrX, qrY, {
+    doc.image(qrImageBuffer, qrX, yPos, {
       width: qrSize,
       height: qrSize
     });
@@ -113,22 +99,9 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     console.error('Error al generar QR:', qrError);
   }
 
-  // Código de compra vertical (lado derecho, cada carácter en una línea)
-  const codigoCompra = compra.codigo_unico || 'SIN-CODIGO';
-  let codigoY = qrY;
-  doc.fontSize(7)
-     .font('Helvetica-Bold')
-     .fillColor('#000000');
-  
-  // Mostrar código de compra verticalmente (cada carácter en una nueva línea)
-  for (let i = 0; i < codigoCompra.length; i++) {
-    doc.text(codigoCompra[i], rightAreaX + rightAreaWidth - 12, codigoY);
-    codigoY += 9;
-  }
+  yPos += qrSize + 8;
 
-  // Información del boleto (debajo del QR, a la izquierda)
-  const infoY = qrY + qrSize + 8;
-  
+  // 4. INFORMACIÓN DEL BOLETO (debajo del QR, centrado)
   // Tipo de boleto
   let tipoBoleto = 'GENERAL';
   if (asiento && asiento.tipo_precio_nombre) {
@@ -140,17 +113,26 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
   doc.fontSize(10)
      .font('Helvetica-Bold')
      .fillColor('#000000')
-     .text(tipoBoleto, margin, infoY);
+     .text(tipoBoleto, margin, yPos, {
+       width: contentWidth,
+       align: 'center'
+     });
 
-  // Precio (debajo del tipo de boleto)
+  yPos += 12;
+
+  // Precio
   const precioTexto = precio ? `Bs. ${parseFloat(precio).toFixed(2)}` : 'Bs. 0.00';
   doc.fontSize(9)
      .font('Helvetica')
      .fillColor('#000000')
-     .text(precioTexto, margin, infoY + 12);
+     .text(precioTexto, margin, yPos, {
+       width: contentWidth,
+       align: 'center'
+     });
 
-  // Asiento (si aplica, debajo del precio)
-  let asientoY = infoY + 24;
+  yPos += 12;
+
+  // Asiento (si aplica)
   if (asiento && asiento.numero_asiento) {
     let asientoTexto = `Asiento: ${asiento.numero_asiento}`;
     if (asiento.numero_mesa) {
@@ -162,19 +144,45 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     doc.fontSize(8)
        .font('Helvetica')
        .fillColor('#000000')
-       .text(asientoTexto, margin, asientoY);
-    asientoY += 12;
+       .text(asientoTexto, margin, yPos, {
+         width: contentWidth,
+         align: 'center'
+       });
+    yPos += 10;
   } else if (mesa && mesa.numero_mesa) {
     const mesaTexto = `Mesa: M${mesa.numero_mesa}`;
     doc.fontSize(8)
        .font('Helvetica')
        .fillColor('#000000')
-       .text(mesaTexto, margin, asientoY);
-    asientoY += 12;
+       .text(mesaTexto, margin, yPos, {
+         width: contentWidth,
+         align: 'center'
+       });
+    yPos += 10;
   }
 
+  // 5. LOGO "plustiket" (al final, centrado)
+  const logoText = 'plus';
+  const logoText2 = 'tiket';
+  const logoWidth = doc.widthOfString(logoText, { fontSize: 10, font: 'Helvetica-Bold' });
+  const logoWidth2 = doc.widthOfString(logoText2, { fontSize: 10, font: 'Helvetica-Bold' });
+  const totalLogoWidth = logoWidth + logoWidth2;
+  const logoX = (ticketWidth - totalLogoWidth) / 2;
+
+  doc.fontSize(10)
+     .font('Helvetica-Bold')
+     .fillColor('#000000')
+     .text(logoText, logoX, yPos);
+  
+  doc.fontSize(10)
+     .font('Helvetica-Bold')
+     .fillColor('#E74C3C') // Rojo para "tiket"
+     .text(logoText2, logoX + logoWidth, yPos);
+
+  yPos += 12;
+
   // Retornar la altura usada para este boleto
-  return asientoY + 5;
+  return yPos;
 };
 
 /**
@@ -552,8 +560,9 @@ export const generarBoletoPDF = async (compra, evento, asientos = [], mesas = []
 
       // Crear documento PDF con tamaño personalizado para ticket térmico (80mm de ancho)
       // 80mm = 226.77 puntos a 72 DPI
+      // Alto suficiente para que quepa todo el contenido en una sola hoja
       const ticketWidth = 226.77; // 80mm
-      const ticketHeight = 150; // Alto inicial, se ajustará según contenido
+      const ticketHeight = 200; // Alto suficiente para todo el contenido
 
       const doc = new PDFDocument({
         size: [ticketWidth, ticketHeight],
