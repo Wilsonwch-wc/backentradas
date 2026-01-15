@@ -7,17 +7,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/**
- * Genera un código alfanumérico único para el boleto
- */
-const generarCodigoBoleto = (codigoUnico, index) => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let codigo = 'TTX';
-  for (let i = 0; i < 11; i++) {
-    codigo += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return codigo;
-};
+// Función eliminada - ya no generamos código aleatorio, usamos el código de compra
 
 /**
  * Genera un boleto individual en formato ticket térmico (80mm de ancho)
@@ -32,26 +22,26 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
   let yPos = margin;
 
   // Logo "plustiket" (arriba a la izquierda)
-  doc.fontSize(14)
+  doc.fontSize(12)
      .font('Helvetica-Bold')
      .fillColor('#000000')
      .text('plus', margin, yPos);
   
-  const plusWidth = doc.widthOfString('plus', { fontSize: 14, font: 'Helvetica-Bold' });
-  doc.fontSize(14)
+  const plusWidth = doc.widthOfString('plus', { fontSize: 12, font: 'Helvetica-Bold' });
+  doc.fontSize(12)
      .font('Helvetica-Bold')
      .fillColor('#E74C3C') // Rojo para "tiket"
      .text('tiket', margin + plusWidth, yPos);
 
   // Nombre del evento (centrado, arriba)
   const eventoNombre = (evento.titulo || 'Evento').toUpperCase();
-  const eventoWidth = doc.widthOfString(eventoNombre, { fontSize: 12, font: 'Helvetica-Bold' });
-  doc.fontSize(12)
+  const eventoWidth = doc.widthOfString(eventoNombre, { fontSize: 11, font: 'Helvetica-Bold' });
+  doc.fontSize(11)
      .font('Helvetica-Bold')
      .fillColor('#000000')
      .text(eventoNombre, (ticketWidth - eventoWidth) / 2, yPos);
 
-  yPos += 18;
+  yPos += 16;
 
   // Fecha y hora (centrado)
   const fechaEvento = evento.hora_inicio 
@@ -71,26 +61,23 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     : 'Hora no disponible';
 
   const fechaHora = `${fechaEvento} - ${horaEvento}`;
-  const fechaHoraWidth = doc.widthOfString(fechaHora, { fontSize: 9, font: 'Helvetica' });
-  doc.fontSize(9)
+  const fechaHoraWidth = doc.widthOfString(fechaHora, { fontSize: 8, font: 'Helvetica' });
+  doc.fontSize(8)
      .font('Helvetica')
      .fillColor('#000000')
      .text(fechaHora, (ticketWidth - fechaHoraWidth) / 2, yPos);
 
-  yPos += 15;
+  yPos += 12;
 
-  // Sección principal: QR a la izquierda, información a la derecha
-  const qrSize = 80; // QR más pequeño para ticket compacto
+  // Sección principal: QR a la izquierda, código de compra vertical a la derecha
+  const qrSize = 70; // QR más pequeño para ticket compacto
   const qrX = margin;
   const qrY = yPos;
   
-  // Área derecha para código y datos
-  const rightAreaX = margin + qrSize + 10;
-  const rightAreaWidth = contentWidth - qrSize - 10;
+  // Área derecha para código de compra vertical
+  const rightAreaX = margin + qrSize + 8;
+  const rightAreaWidth = contentWidth - qrSize - 8;
 
-  // Generar código alfanumérico único
-  const codigoBoleto = generarCodigoBoleto(compra.codigo_unico, index);
-  
   // Código de escaneo para el QR
   const codigoEscaneo = (asiento && asiento.codigo_escaneo) 
     ? asiento.codigo_escaneo 
@@ -126,19 +113,23 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     console.error('Error al generar QR:', qrError);
   }
 
-  // Código alfanumérico vertical (lado derecho, arriba)
+  // Código de compra vertical (lado derecho, cada carácter en una línea)
+  const codigoCompra = compra.codigo_unico || 'SIN-CODIGO';
   let codigoY = qrY;
-  doc.fontSize(8)
+  doc.fontSize(7)
      .font('Helvetica-Bold')
      .fillColor('#000000');
   
-  // Mostrar código verticalmente (cada carácter en una nueva línea)
-  for (let i = 0; i < codigoBoleto.length; i++) {
-    doc.text(codigoBoleto[i], rightAreaX + rightAreaWidth - 15, codigoY);
-    codigoY += 10;
+  // Mostrar código de compra verticalmente (cada carácter en una nueva línea)
+  for (let i = 0; i < codigoCompra.length; i++) {
+    doc.text(codigoCompra[i], rightAreaX + rightAreaWidth - 12, codigoY);
+    codigoY += 9;
   }
 
-  // Tipo de boleto (debajo del código, alineado a la derecha)
+  // Información del boleto (debajo del QR, a la izquierda)
+  const infoY = qrY + qrSize + 8;
+  
+  // Tipo de boleto
   let tipoBoleto = 'GENERAL';
   if (asiento && asiento.tipo_precio_nombre) {
     tipoBoleto = asiento.tipo_precio_nombre.toUpperCase();
@@ -146,21 +137,20 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     tipoBoleto = 'MESA';
   }
 
-  const tipoBoletoWidth = doc.widthOfString(tipoBoleto, { fontSize: 11, font: 'Helvetica-Bold' });
-  doc.fontSize(11)
+  doc.fontSize(10)
      .font('Helvetica-Bold')
      .fillColor('#000000')
-     .text(tipoBoleto, rightAreaX + rightAreaWidth - tipoBoletoWidth, qrY + 20);
+     .text(tipoBoleto, margin, infoY);
 
-  // Precio (debajo del tipo de boleto, alineado a la derecha)
+  // Precio (debajo del tipo de boleto)
   const precioTexto = precio ? `Bs. ${parseFloat(precio).toFixed(2)}` : 'Bs. 0.00';
-  const precioWidth = doc.widthOfString(precioTexto, { fontSize: 10, font: 'Helvetica' });
-  doc.fontSize(10)
+  doc.fontSize(9)
      .font('Helvetica')
      .fillColor('#000000')
-     .text(precioTexto, rightAreaX + rightAreaWidth - precioWidth, qrY + 35);
+     .text(precioTexto, margin, infoY + 12);
 
   // Asiento (si aplica, debajo del precio)
+  let asientoY = infoY + 24;
   if (asiento && asiento.numero_asiento) {
     let asientoTexto = `Asiento: ${asiento.numero_asiento}`;
     if (asiento.numero_mesa) {
@@ -169,31 +159,22 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
       asientoTexto = `Asiento: ${asiento.area_nombre} - ${asiento.numero_asiento}`;
     }
     
-    const asientoWidth = doc.widthOfString(asientoTexto, { fontSize: 8, font: 'Helvetica' });
     doc.fontSize(8)
        .font('Helvetica')
        .fillColor('#000000')
-       .text(asientoTexto, rightAreaX + rightAreaWidth - asientoWidth, qrY + 50);
+       .text(asientoTexto, margin, asientoY);
+    asientoY += 12;
   } else if (mesa && mesa.numero_mesa) {
     const mesaTexto = `Mesa: M${mesa.numero_mesa}`;
-    const mesaWidth = doc.widthOfString(mesaTexto, { fontSize: 8, font: 'Helvetica' });
     doc.fontSize(8)
        .font('Helvetica')
        .fillColor('#000000')
-       .text(mesaTexto, rightAreaX + rightAreaWidth - mesaWidth, qrY + 50);
+       .text(mesaTexto, margin, asientoY);
+    asientoY += 12;
   }
 
-  // Número de orden (abajo, centrado)
-  const ordenY = qrY + qrSize + 10;
-  const ordenTexto = `Número de orden: ${compra.codigo_unico}`;
-  const ordenWidth = doc.widthOfString(ordenTexto, { fontSize: 7, font: 'Helvetica' });
-  doc.fontSize(7)
-     .font('Helvetica')
-     .fillColor('#666666')
-     .text(ordenTexto, (ticketWidth - ordenWidth) / 2, ordenY);
-
   // Retornar la altura usada para este boleto
-  return ordenY + 15;
+  return asientoY + 5;
 };
 
 /**
