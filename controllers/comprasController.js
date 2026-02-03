@@ -1647,6 +1647,17 @@ const generarCodigoEscaneo = async (connection) => {
 export const confirmarPago = async (req, res) => {
   try {
     const { id } = req.params;
+    const { tipo_pago } = req.body || {};
+
+    // Validar tipo de pago requerido
+    if (!tipo_pago || !['QR', 'EFECTIVO'].includes(tipo_pago.toUpperCase())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Debe indicar el tipo de pago: QR o EFECTIVO'
+      });
+    }
+
+    const tipoPagoValido = tipo_pago.toUpperCase();
 
     // Verificar que la compra existe
     const [compras] = await pool.execute('SELECT * FROM compras WHERE id = ?', [id]);
@@ -1672,14 +1683,15 @@ export const confirmarPago = async (req, res) => {
     await connection.beginTransaction();
 
     try {
-      // Actualizar estado de la compra
+      // Actualizar estado de la compra con tipo de pago
       await connection.execute(
         `UPDATE compras 
          SET estado = 'PAGO_REALIZADO', 
              fecha_pago = NOW(), 
-             fecha_confirmacion = NOW()
+             fecha_confirmacion = NOW(),
+             tipo_pago = ?
          WHERE id = ?`,
-        [id]
+        [tipoPagoValido, id]
       );
 
       // Obtener todos los asientos de la compra para generar códigos

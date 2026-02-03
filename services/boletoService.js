@@ -194,12 +194,13 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
 };
 
 /**
- * Genera la factura/comprobante (mismo tamaño que los boletos - 80mm)
+ * Genera el recibo de pago (mismo tamaño que los boletos - 80mm)
+ * Recibo simple sin valor fiscal - evita requisitos legales de facturación
  */
 const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGenerales) => {
   // Mismo tamaño que los boletos (80mm de ancho)
   const ticketWidth = 226.77; // 80mm en puntos
-  const ticketHeight = 400; // Alto suficiente para la factura
+  const ticketHeight = 400; // Alto suficiente para el recibo
   const margin = 10;
   const contentWidth = ticketWidth - (margin * 2);
 
@@ -210,68 +211,64 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
 
   let yPos = margin;
 
-  // Encabezado de factura
+  // Encabezado - RECIBO (sin valor fiscal)
   doc.fontSize(10)
      .font('Helvetica-Bold')
      .fillColor('#000000')
-     .text('FACTURA CON DERECHO A CRÉDITO FISCAL', margin, yPos, {
+     .text('RECIBO DE PAGO', margin, yPos, {
        width: contentWidth,
        align: 'center'
      });
 
-  yPos += 15;
+  yPos += 8;
+
+  doc.fontSize(6)
+     .font('Helvetica')
+     .fillColor('#444444')
+     .text('Este documento no tiene valor fiscal', margin, yPos, {
+       width: contentWidth,
+       align: 'center'
+     });
+
+  yPos += 14;
 
   doc.fontSize(9)
      .font('Helvetica-Bold')
-     .text('FACTURA', margin, yPos);
-  
-  doc.fontSize(9)
-     .font('Helvetica-Bold')
-     .text('PlusTiket', margin, yPos + 12);
+     .fillColor('#000000')
+     .text('PlusTiket', margin, yPos);
   
   doc.fontSize(8)
      .font('Helvetica')
-     .text('Quillacollo, Cochabamba', margin, yPos + 24);
-  doc.text('Bolivia', margin, yPos + 36);
+     .text('Quillacollo, Cochabamba', margin, yPos + 12);
+  doc.text('Bolivia', margin, yPos + 24);
 
-  // Información de factura (lado derecho, más a la izquierda para dejar espacio al QR)
-  const rightX = ticketWidth - margin - 100; // Más a la izquierda para dejar espacio
-  doc.fontSize(7)
-     .font('Helvetica')
-     .text('NIT:', rightX, yPos);
-  doc.text('FACTURA', rightX + 25, yPos);
-
-  doc.text('FACTURA N°: 0', rightX, yPos + 10);
-  doc.text('CÓD. AUTORIZACIÓN:', rightX, yPos + 20);
-
-  // QR Code de la factura (esquina superior derecha, más pequeño y más abajo para no tapar)
+  // QR Code del recibo (esquina superior derecha)
   try {
-    const facturaQRData = JSON.stringify({
-      tipo: 'factura',
+    const reciboQRData = JSON.stringify({
+      tipo: 'recibo',
       compra_id: compra.id,
       codigo_unico: compra.codigo_unico,
       total: compra.total,
       fecha: new Date().toISOString()
     });
 
-    const qrSize = 40; // QR más pequeño
-    const qrImageBuffer = await QRCode.toBuffer(facturaQRData, {
+    const qrSize = 40;
+    const qrImageBuffer = await QRCode.toBuffer(reciboQRData, {
       errorCorrectionLevel: 'H',
       type: 'png',
       width: qrSize,
       margin: 1
     });
 
-    // Colocar el QR más abajo para que no tape la información
-    doc.image(qrImageBuffer, ticketWidth - margin - qrSize, yPos + 25, {
+    doc.image(qrImageBuffer, ticketWidth - margin - qrSize, yPos - 5, {
       width: qrSize,
       height: qrSize
     });
   } catch (qrError) {
-    console.error('Error al generar QR de factura:', qrError);
+    console.error('Error al generar QR de recibo:', qrError);
   }
 
-  yPos += 50;
+  yPos += 45;
 
   // Línea separadora
   doc.moveTo(margin, yPos)
@@ -285,25 +282,31 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
   // Datos del cliente
   doc.fontSize(7)
      .font('Helvetica')
-     .text(`NOMBRE/RAZÓN SOCIAL: ${compra.cliente_nombre || 'SN'}`, margin, yPos, {
+     .fillColor('#000000')
+     .text(`CLIENTE: ${compra.cliente_nombre || 'SN'}`, margin, yPos, {
        width: contentWidth
      });
   
   yPos += 10;
-  doc.text(`NIT/CI/CEX: ${compra.cliente_telefono || compra.cliente_email || '12345678'}`, margin, yPos, {
+  const contacto = compra.cliente_telefono || compra.cliente_email || '-';
+  doc.text(`CONTACTO: ${contacto}`, margin, yPos, {
     width: contentWidth
   });
-  
-  yPos += 10;
-  doc.text(`COD. CLIENTE:`, margin, yPos);
   
   yPos += 10;
   const fechaEmision = new Date().toLocaleDateString('es-ES', {
     year: 'numeric',
     month: '2-digit',
-    day: '2-digit'
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
   });
-  doc.text(`FECHA DE EMISIÓN: ${fechaEmision}`, margin, yPos, {
+  doc.text(`FECHA: ${fechaEmision}`, margin, yPos, {
+    width: contentWidth
+  });
+
+  yPos += 10;
+  doc.text(`CÓDIGO: ${compra.codigo_unico || '-'}`, margin, yPos, {
     width: contentWidth
   });
 
@@ -452,13 +455,9 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
 
   yPos += 10;
 
-  // Totales
+  // Totales (recibo simplificado)
   const subtotal = totalItems;
-  const descuento = 0;
   const total = parseFloat(compra.total || 0);
-  const montoGiftCard = 0;
-  const montoAPagar = total;
-  const importeBaseCreditoFiscal = total;
 
   doc.fontSize(7)
      .font('Helvetica')
@@ -468,42 +467,28 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
   doc.text(subtotalText, ticketWidth - margin - subtotalTextWidth, yPos);
 
   yPos += 9;
-  doc.text('DESCUENTO Bs', margin, yPos);
-  doc.text('0.00', ticketWidth - margin - 20, yPos);
+  if (parseFloat(compra.total || 0) !== subtotal) {
+    doc.text('DESCUENTO Bs', margin, yPos);
+    const descuento = subtotal - total;
+    doc.text(descuento.toFixed(2), ticketWidth - margin - 20, yPos);
+    yPos += 9;
+  }
 
-  yPos += 9;
   doc.font('Helvetica-Bold')
      .text('TOTAL Bs', margin, yPos);
   doc.text(total.toFixed(2), ticketWidth - margin - 20, yPos);
 
-  yPos += 9;
-  doc.font('Helvetica')
-     .text('MONTO GIFT CARD Bs', margin, yPos);
-  doc.text('0.00', ticketWidth - margin - 20, yPos);
-
-  yPos += 9;
-  doc.font('Helvetica-Bold')
-     .text('MONTO A PAGAR Bs', margin, yPos);
-  doc.text(montoAPagar.toFixed(2), ticketWidth - margin - 20, yPos);
-
-  yPos += 9;
-  doc.font('Helvetica')
-     .text('IMPORTE BASE CRÉDITO FISCAL Bs', margin, yPos, {
-       width: contentWidth
-     });
-  doc.text(importeBaseCreditoFiscal.toFixed(2), ticketWidth - margin - 20, yPos);
-
-  yPos += 10;
+  yPos += 12;
 
   // Monto en palabras
-  const numeroEnPalabras = convertirNumeroAPalabras(montoAPagar);
+  const numeroEnPalabras = convertirNumeroAPalabras(total);
   doc.fontSize(6)
      .font('Helvetica')
      .text(`Son: ${numeroEnPalabras} 00/100 bolivianos`, margin, yPos, {
        width: contentWidth
      });
 
-  yPos += 12;
+  yPos += 14;
 
   // Línea separadora
   doc.moveTo(margin, yPos)
@@ -514,28 +499,19 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
 
   yPos += 12;
 
-  // Textos legales (con más espacio entre ellos para que no se choquen)
-  doc.fontSize(5)
+  // Pie del recibo - mensaje simple
+  doc.fontSize(6)
      .font('Helvetica')
-     .fillColor('#000000')
-     .text('"ESTA FACTURA CONTRIBUYE AL DESARROLLO DEL PAÍS, EL USO ILÍCITO DE ÉSTA SERÁ SANCIONADO DE ACUERDO A LEY"', margin, yPos, {
+     .fillColor('#555555')
+     .text('¡Gracias por su compra!', margin, yPos, {
        width: contentWidth,
-       align: 'center',
-       lineGap: 2
+       align: 'center'
      });
 
-  yPos += 12; // Más espacio entre textos para evitar que se choquen
-  doc.text('Ley N° 453: El proveedor debe exhibir certificaciones de habilitación o documentos que acrediten las capacidades u ofertas de servicios especializados', margin, yPos, {
+  yPos += 8;
+  doc.text('Conserve este recibo junto con su entrada', margin, yPos, {
      width: contentWidth,
-     align: 'center',
-     lineGap: 2
-   });
-
-  yPos += 12; // Más espacio entre textos para evitar que se choquen
-  doc.text('"Este documento es la Representación Gráfica de un Documento Fiscal Digital emitido en una modalidad de facturación en línea"', margin, yPos, {
-     width: contentWidth,
-     align: 'center',
-     lineGap: 2
+     align: 'center'
    });
 };
 
@@ -673,7 +649,7 @@ export const generarBoletoPDF = async (compra, evento, asientos = [], mesas = []
         await generarBoletoIndividual(doc, compra, evento, null, null, null, 0, 1, precio);
       }
 
-      // Generar factura/comprobante al final (en tamaño A4)
+      // Generar recibo de pago al final
       await generarFactura(doc, compra, evento, asientos, mesas, entradasGenerales);
 
       // Finalizar PDF

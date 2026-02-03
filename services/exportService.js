@@ -67,6 +67,30 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
 
     let rowIndex = 5;
 
+    // Resumen por tipo de pago
+    if (datos.resumenTipoPago) {
+      const rtp = datos.resumenTipoPago;
+      resumenSheet.mergeCells(`A${rowIndex}:E${rowIndex}`);
+      resumenSheet.getCell(`A${rowIndex}`).value = 'RESUMEN POR TIPO DE PAGO';
+      resumenSheet.getCell(`A${rowIndex}`).style = {
+        font: { bold: true, size: 12, color: { argb: 'FFFFFFFF' } },
+        fill: {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF25D366' }
+        }
+      };
+      rowIndex++;
+      resumenSheet.getCell(`A${rowIndex}`).value = 'Pagos QR:';
+      resumenSheet.getCell(`B${rowIndex}`).value = rtp.pagos_qr;
+      resumenSheet.getCell(`C${rowIndex}`).value = `Bs. ${parseFloat(rtp.total_qr || 0).toFixed(2)}`;
+      rowIndex++;
+      resumenSheet.getCell(`A${rowIndex}`).value = 'Pagos Efectivo:';
+      resumenSheet.getCell(`B${rowIndex}`).value = rtp.pagos_efectivo;
+      resumenSheet.getCell(`C${rowIndex}`).value = `Bs. ${parseFloat(rtp.total_efectivo || 0).toFixed(2)}`;
+      rowIndex += 2;
+    }
+
     // Estadísticas generales
     if (datos.estadisticas) {
       const stats = datos.estadisticas;
@@ -138,6 +162,7 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
         'Teléfono',
         'Cantidad',
         'Total',
+        'Tipo Pago',
         'Estado',
         'Fecha Compra',
         'Fecha Pago'
@@ -164,6 +189,7 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
           compra.cliente_telefono || '',
           compra.cantidad,
           parseFloat(compra.total || 0).toFixed(2),
+          compra.tipo_pago || '-',
           compra.estado,
           compra.fecha_compra ? new Date(compra.fecha_compra).toLocaleString('es-ES') : '',
           compra.fecha_pago ? new Date(compra.fecha_pago).toLocaleString('es-ES') : ''
@@ -254,6 +280,24 @@ export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
 
       let yPos = 150;
 
+      // Resumen por tipo de pago
+      if (datos.resumenTipoPago) {
+        const rtp = datos.resumenTipoPago;
+        yPos += 15;
+        doc.fontSize(14)
+           .font('Helvetica-Bold')
+           .fillColor('#25D366')
+           .text('RESUMEN POR TIPO DE PAGO', 50, yPos);
+        yPos += 22;
+        doc.fontSize(11)
+           .font('Helvetica')
+           .fillColor('#34495E')
+           .text(`Pagos QR: ${rtp.pagos_qr} venta(s) - Bs. ${parseFloat(rtp.total_qr || 0).toFixed(2)}`, 70, yPos);
+        yPos += 20;
+        doc.text(`Pagos Efectivo: ${rtp.pagos_efectivo} venta(s) - Bs. ${parseFloat(rtp.total_efectivo || 0).toFixed(2)}`, 70, yPos);
+        yPos += 30;
+      }
+
       // Estadísticas
       if (datos.estadisticas) {
         yPos += 20;
@@ -335,10 +379,11 @@ export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
            .fillColor('#FFFFFF')
            .text('ID', 55, tableTop + 8)
            .text('Código', 85, tableTop + 8)
-           .text('Cliente', 160, tableTop + 8)
-           .text('Cantidad', 270, tableTop + 8)
-           .text('Total', 330, tableTop + 8)
-           .text('Estado', 390, tableTop + 8)
+           .text('Cliente', 150, tableTop + 8)
+           .text('Cant.', 260, tableTop + 8)
+           .text('Total', 295, tableTop + 8)
+           .text('Tipo', 350, tableTop + 8)
+           .text('Estado', 400, tableTop + 8)
            .text('Fecha', 460, tableTop + 8);
 
         yPos = tableTop + 25;
@@ -358,11 +403,12 @@ export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
              .font('Helvetica')
              .fillColor('#2C3E50')
              .text(compra.id.toString(), 55, yPos + 6)
-             .text(compra.codigo_unico.substring(0, 10), 85, yPos + 6)
-             .text(compra.cliente_nombre.substring(0, 20), 160, yPos + 6)
-             .text(compra.cantidad.toString(), 270, yPos + 6)
-             .text(`Bs. ${parseFloat(compra.total || 0).toFixed(2)}`, 330, yPos + 6)
-             .text(compra.estado, 390, yPos + 6)
+             .text(compra.codigo_unico.substring(0, 8), 85, yPos + 6)
+             .text(compra.cliente_nombre.substring(0, 18), 150, yPos + 6)
+             .text(compra.cantidad.toString(), 265, yPos + 6)
+             .text(`Bs. ${parseFloat(compra.total || 0).toFixed(2)}`, 292, yPos + 6)
+             .text(compra.tipo_pago || '-', 350, yPos + 6)
+             .text(compra.estado.substring(0, 12), 400, yPos + 6)
              .text(
                compra.fecha_compra 
                  ? new Date(compra.fecha_compra).toLocaleDateString('es-ES') 

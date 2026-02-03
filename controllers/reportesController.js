@@ -100,6 +100,7 @@ export const obtenerReportePorEvento = async (req, res) => {
           c.cantidad,
           c.total,
           c.estado,
+          c.tipo_pago,
           c.fecha_compra,
           c.fecha_pago,
           c.fecha_confirmacion
@@ -201,6 +202,15 @@ export const obtenerReportePorEvento = async (req, res) => {
         if (compra.estado === 'PAGO_REALIZADO' || compra.estado === 'ENTRADA_USADA') {
           acc.pagos_realizados += 1;
           acc.entradas_confirmadas += entradas;
+          // Acumular por tipo de pago
+          const totalCompra = parseFloat(compra.total || 0);
+          if (compra.tipo_pago === 'QR') {
+            acc.pagos_qr += 1;
+            acc.total_qr += totalCompra;
+          } else if (compra.tipo_pago === 'EFECTIVO') {
+            acc.pagos_efectivo += 1;
+            acc.total_efectivo += totalCompra;
+          }
         } else if (compra.estado === 'PAGO_PENDIENTE') {
           acc.pagos_pendientes += 1;
           acc.entradas_pendientes += entradas;
@@ -217,7 +227,11 @@ export const obtenerReportePorEvento = async (req, res) => {
         canceladas: 0,
         entradas_totales: 0,
         entradas_confirmadas: 0,
-        entradas_pendientes: 0
+        entradas_pendientes: 0,
+        pagos_qr: 0,
+        pagos_efectivo: 0,
+        total_qr: 0,
+        total_efectivo: 0
       }
     );
 
@@ -268,15 +282,33 @@ export const exportarReporte = async (req, res) => {
 
     const evento = eventos[0];
 
-    // Obtener compras
+    // Obtener compras (incluye tipo_pago para reportes)
     const [compras] = await pool.execute(
       `SELECT c.id, c.codigo_unico, c.cliente_nombre, c.cliente_email, 
-              c.cliente_telefono, c.cantidad, c.total, c.estado, 
+              c.cliente_telefono, c.cantidad, c.total, c.estado, c.tipo_pago,
               c.fecha_compra, c.fecha_pago, c.fecha_confirmacion
        FROM compras c
        WHERE c.evento_id = ?
        ORDER BY c.fecha_compra DESC`,
       [evento_id]
+    );
+
+    // Calcular resumen por tipo de pago para la exportación
+    const resumenTipoPago = compras.reduce(
+      (acc, c) => {
+        if ((c.estado === 'PAGO_REALIZADO' || c.estado === 'ENTRADA_USADA') && c.tipo_pago) {
+          const total = parseFloat(c.total || 0);
+          if (c.tipo_pago === 'QR') {
+            acc.pagos_qr += 1;
+            acc.total_qr += total;
+          } else if (c.tipo_pago === 'EFECTIVO') {
+            acc.pagos_efectivo += 1;
+            acc.total_efectivo += total;
+          }
+        }
+        return acc;
+      },
+      { pagos_qr: 0, pagos_efectivo: 0, total_qr: 0, total_efectivo: 0 }
     );
 
     // Obtener estadísticas básicas
@@ -367,7 +399,8 @@ export const exportarReporte = async (req, res) => {
     const datosReporte = {
       evento,
       compras,
-      estadisticas
+      estadisticas,
+      resumenTipoPago
     };
 
     let filepath;
