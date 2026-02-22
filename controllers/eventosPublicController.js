@@ -5,7 +5,7 @@ const columnasEventoPublicQuery = `
   SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
   WHERE TABLE_SCHEMA = DATABASE() 
     AND TABLE_NAME = 'eventos' 
-    AND COLUMN_NAME IN ('forma_espacio', 'escenario_x', 'escenario_y', 'escenario_width', 'escenario_height', 'qr_pago_url', 'estado')
+    AND COLUMN_NAME IN ('forma_espacio', 'escenario_x', 'escenario_y', 'escenario_width', 'escenario_height', 'hoja_ancho', 'hoja_alto', 'qr_pago_url', 'estado')
 `;
 
 // Obtener todos los eventos (público - sin autenticación)
@@ -78,6 +78,8 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
     
     const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
     const tieneFormaEspacio = columnasExistentes.includes('forma_espacio');
+    const tieneHojaAncho = columnasExistentes.includes('hoja_ancho');
+    const tieneHojaAlto = columnasExistentes.includes('hoja_alto');
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
     
     const tieneEstado = columnasExistentes.includes('estado');
@@ -87,6 +89,8 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
     if (tieneFormaEspacio) {
       query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height`;
     }
+    if (tieneHojaAncho) query += `, hoja_ancho`;
+    if (tieneHojaAlto) query += `, hoja_alto`;
     if (tieneQrPago) {
       query += `, qr_pago_url`;
     }
@@ -128,6 +132,8 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
           if (tieneFormaEspacio) {
             query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height`;
           }
+          if (tieneHojaAncho) query += `, hoja_ancho`;
+          if (tieneHojaAlto) query += `, hoja_alto`;
           if (tieneQrPago) {
             query += `, qr_pago_url`;
           }
@@ -191,18 +197,37 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
       );
       evento.asientos = asientos;
 
-      // Obtener áreas del layout
+      // Obtener áreas del layout (incluye tipo PERSONAS para zona general)
       try {
         const [areas] = await pool.execute(
-          `SELECT id, nombre, posicion_x, posicion_y, ancho, alto, color
-           FROM areas_layout
-           WHERE evento_id = ?
-           ORDER BY nombre ASC`,
+          `SELECT ar.id, ar.nombre, ar.posicion_x, ar.posicion_y, ar.ancho, ar.alto, ar.color,
+                  ar.tipo_area, ar.capacidad_personas, ar.orden, ar.forma, ar.tipo_precio_id,
+                  tp.precio as precio_area, tp.nombre as tipo_precio_nombre
+           FROM areas_layout ar
+           LEFT JOIN tipos_precio_evento tp ON ar.tipo_precio_id = tp.id AND tp.activo = 1
+           WHERE ar.evento_id = ?
+           ORDER BY COALESCE(ar.orden, 999), ar.nombre ASC`,
           [eventoId]
         );
+        // Para áreas PERSONAS, calcular reservadas y disponibles
+        for (const area of areas) {
+          area.tipo_area = area.tipo_area || 'SILLAS';
+          area.forma = area.forma || 'rectangulo';
+          if (area.tipo_area === 'PERSONAS' && area.capacidad_personas) {
+            const [reservas] = await pool.execute(
+              `SELECT COALESCE(SUM(cantidad), 0) as total
+               FROM compras_areas_personas cap
+               INNER JOIN compras c ON cap.compra_id = c.id
+               WHERE cap.area_id = ? AND c.estado IN ('PAGO_PENDIENTE', 'PAGO_REALIZADO', 'ENTRADA_USADA')`,
+              [area.id]
+            );
+            area.personas_reservadas = parseInt(reservas[0]?.total || 0, 10);
+            area.personas_disponibles = Math.max(0, (area.capacidad_personas || 0) - area.personas_reservadas);
+            area.precio = area.precio_area != null ? parseFloat(area.precio_area) : null;
+          }
+        }
         evento.areas = areas;
       } catch (error) {
-        // Si la tabla no existe, simplemente no incluir áreas
         console.warn('No se pudieron cargar las áreas:', error);
         evento.areas = [];
       }

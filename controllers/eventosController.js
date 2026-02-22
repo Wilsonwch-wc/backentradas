@@ -8,7 +8,8 @@ const columnasEventoQuery = `
     AND COLUMN_NAME IN (
       'forma_espacio', 'escenario_x', 'escenario_y',
       'escenario_width', 'escenario_height',
-      'layout_bloqueado', 'qr_pago_url', 'estado'
+      'layout_bloqueado', 'hoja_ancho', 'hoja_alto',
+      'qr_pago_url', 'estado'
     )
 `;
 
@@ -21,6 +22,8 @@ export const obtenerEventos = async (req, res) => {
     const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
     const tieneFormaEspacio = columnasExistentes.includes('forma_espacio');
     const tieneLayoutBloqueado = columnasExistentes.includes('layout_bloqueado');
+    const tieneHojaAncho = columnasExistentes.includes('hoja_ancho');
+    const tieneHojaAlto = columnasExistentes.includes('hoja_alto');
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
     const tieneEstado = columnasExistentes.includes('estado');
     
@@ -33,6 +36,8 @@ export const obtenerEventos = async (req, res) => {
     if (tieneLayoutBloqueado) {
       query += `, layout_bloqueado`;
     }
+    if (tieneHojaAncho) query += `, hoja_ancho`;
+    if (tieneHojaAlto) query += `, hoja_alto`;
     if (tieneQrPago) {
       query += `, qr_pago_url`;
     }
@@ -69,6 +74,8 @@ export const obtenerEventoPorId = async (req, res) => {
     const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
     const tieneFormaEspacio = columnasExistentes.includes('forma_espacio');
     const tieneLayoutBloqueado = columnasExistentes.includes('layout_bloqueado');
+    const tieneHojaAncho = columnasExistentes.includes('hoja_ancho');
+    const tieneHojaAlto = columnasExistentes.includes('hoja_alto');
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
     const tieneEstado = columnasExistentes.includes('estado');
     
@@ -81,6 +88,8 @@ export const obtenerEventoPorId = async (req, res) => {
     if (tieneLayoutBloqueado) {
       query += `, layout_bloqueado`;
     }
+    if (tieneHojaAncho) query += `, hoja_ancho`;
+    if (tieneHojaAlto) query += `, hoja_alto`;
     if (tieneQrPago) {
       query += `, qr_pago_url`;
     }
@@ -265,7 +274,8 @@ export const actualizarEvento = async (req, res) => {
   try {
     const { id } = req.params;
     const { imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas,
-            forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, layout_bloqueado, qr_pago_url, estado } = req.body;
+            forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, layout_bloqueado,
+            hoja_ancho, hoja_alto, qr_pago_url, estado } = req.body;
 
     // Verificar si el evento existe
     const [eventosExistentes] = await pool.execute(
@@ -376,9 +386,21 @@ export const actualizarEvento = async (req, res) => {
     // Verificar columnas disponibles para campos opcionales
     const [columnas] = await pool.execute(columnasEventoQuery);
     const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
+    const tieneHojaAncho = columnasExistentes.includes('hoja_ancho');
+    const tieneHojaAlto = columnasExistentes.includes('hoja_alto');
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
     const tieneEstado = columnasExistentes.includes('estado');
 
+    if (tieneHojaAncho && hoja_ancho !== undefined) {
+      const ancho = hoja_ancho != null && !isNaN(Number(hoja_ancho)) ? Math.max(100, Math.min(5000, Number(hoja_ancho))) : null;
+      campos.push('hoja_ancho = ?');
+      valores.push(ancho);
+    }
+    if (tieneHojaAlto && hoja_alto !== undefined) {
+      const alto = hoja_alto != null && !isNaN(Number(hoja_alto)) ? Math.max(100, Math.min(5000, Number(hoja_alto))) : null;
+      campos.push('hoja_alto = ?');
+      valores.push(alto);
+    }
     if (tieneQrPago && qr_pago_url !== undefined) {
       campos.push('qr_pago_url = ?');
       valores.push(qr_pago_url || null);
@@ -416,6 +438,8 @@ export const actualizarEvento = async (req, res) => {
     if (tieneLayoutBloqueado) {
       querySelect += `, layout_bloqueado`;
     }
+    if (tieneHojaAncho) querySelect += `, hoja_ancho`;
+    if (tieneHojaAlto) querySelect += `, hoja_alto`;
     if (tieneQrPago) {
       querySelect += `, qr_pago_url`;
     }

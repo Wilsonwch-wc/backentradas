@@ -146,6 +146,21 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
           resumenSheet.getCell(`B${rowIndex}`).value = stats.mesas.escaneadas;
           rowIndex += 2;
         }
+        if (stats.zonas_generales) {
+          const zg = stats.zonas_generales;
+          resumenSheet.getCell(`A${rowIndex}`).value = 'ZONAS GENERALES (PERSONAS DE PIE)';
+          resumenSheet.getCell(`A${rowIndex}`).style = { font: { bold: true } };
+          rowIndex++;
+          resumenSheet.getCell(`A${rowIndex}`).value = '  Capacidad Total:';
+          resumenSheet.getCell(`B${rowIndex}`).value = zg.limite_total !== null ? zg.limite_total : 'N/A';
+          rowIndex++;
+          resumenSheet.getCell(`A${rowIndex}`).value = '  Vendidas:';
+          resumenSheet.getCell(`B${rowIndex}`).value = zg.vendidas;
+          rowIndex++;
+          resumenSheet.getCell(`A${rowIndex}`).value = '  Escaneadas:';
+          resumenSheet.getCell(`B${rowIndex}`).value = zg.escaneadas;
+          rowIndex += 2;
+        }
       }
     }
 
@@ -162,6 +177,7 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
         'Teléfono',
         'Cantidad',
         'Total',
+        'Tipo Venta',
         'Tipo Pago',
         'Estado',
         'Fecha Compra',
@@ -181,6 +197,7 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
 
       // Datos
       datos.compras.forEach((compra, index) => {
+        const tipoVentaLabel = compra.tipo_venta === 'REGALO_ADMIN' ? 'Regalo Admin' : compra.tipo_venta === 'OFERTA_ADMIN' ? 'Oferta' : 'Normal';
         const row = comprasSheet.addRow([
           compra.id,
           compra.codigo_unico,
@@ -189,6 +206,7 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
           compra.cliente_telefono || '',
           compra.cantidad,
           parseFloat(compra.total || 0).toFixed(2),
+          tipoVentaLabel,
           compra.tipo_pago || '-',
           compra.estado,
           compra.fecha_compra ? new Date(compra.fecha_compra).toLocaleString('es-ES') : '',
@@ -237,7 +255,7 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
 };
 
 /**
- * Genera un reporte en formato PDF
+ * Genera un reporte en formato PDF mejorado
  */
 export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
   return new Promise((resolve, reject) => {
@@ -257,184 +275,489 @@ export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
       const stream = fs.createWriteStream(filepath);
       doc.pipe(stream);
 
-      // Encabezado
-      doc.fontSize(24)
+      // ========== ENCABEZADO SIMPLE ==========
+      doc.fontSize(20)
          .font('Helvetica-Bold')
          .fillColor('#2C3E50')
-         .text('REPORTE DE VENTAS', { align: 'center' });
+         .text('REPORTE DE VENTAS', 50, 50, { align: 'left' });
 
-      doc.moveDown();
-      doc.fontSize(10)
+      doc.fontSize(9)
          .font('Helvetica')
-         .fillColor('#7F8C8D')
-         .text(`Generado el: ${new Date().toLocaleString('es-ES')}`, { align: 'center' });
+         .fillColor('#666')
+         .text(`Generado el: ${new Date().toLocaleString('es-ES')}`, 50, 75, { align: 'left' });
 
       // Información del evento
       if (datos.evento) {
-        doc.moveDown(1.5);
-        doc.fontSize(16)
+        doc.fontSize(14)
            .font('Helvetica-Bold')
            .fillColor('#34495E')
-           .text(`Evento: ${datos.evento.titulo}`, { align: 'center' });
+           .text(`Evento: ${datos.evento.titulo}`, 50, 95, { align: 'left' });
       }
 
-      let yPos = 150;
+      let yPos = 130;
 
-      // Resumen por tipo de pago
+      // ========== RESUMEN POR TIPO DE PAGO EN TABLA ==========
       if (datos.resumenTipoPago) {
         const rtp = datos.resumenTipoPago;
+        const totalVentas = rtp.pagos_qr + rtp.pagos_efectivo;
+        const totalIngresos = parseFloat(rtp.total_qr || 0) + parseFloat(rtp.total_efectivo || 0);
+        
         yPos += 15;
-        doc.fontSize(14)
+        doc.fontSize(12)
            .font('Helvetica-Bold')
-           .fillColor('#25D366')
+           .fillColor('#2C3E50')
            .text('RESUMEN POR TIPO DE PAGO', 50, yPos);
-        yPos += 22;
-        doc.fontSize(11)
-           .font('Helvetica')
-           .fillColor('#34495E')
-           .text(`Pagos QR: ${rtp.pagos_qr} venta(s) - Bs. ${parseFloat(rtp.total_qr || 0).toFixed(2)}`, 70, yPos);
+        
         yPos += 20;
-        doc.text(`Pagos Efectivo: ${rtp.pagos_efectivo} venta(s) - Bs. ${parseFloat(rtp.total_efectivo || 0).toFixed(2)}`, 70, yPos);
-        yPos += 30;
+        
+        // Tabla de resumen (más compacta)
+        const resumenTableWidth = 350;
+        const resumenTableX = 50;
+        const resumenRowHeight = 18;
+        
+        // Encabezado de tabla
+        doc.rect(resumenTableX, yPos, resumenTableWidth, resumenRowHeight)
+           .fill('#34495E')
+           .stroke('#2C3E50')
+           .lineWidth(1);
+        
+        doc.fontSize(8)
+           .font('Helvetica-Bold')
+           .fillColor('#FFFFFF')
+           .text('Tipo de Pago', resumenTableX + 8, yPos + 5)
+           .text('Ventas', resumenTableX + 140, yPos + 5)
+           .text('Total', resumenTableX + 210, yPos + 5);
+        
+        yPos += resumenRowHeight;
+        
+        // Fila QR
+        doc.rect(resumenTableX, yPos, resumenTableWidth, resumenRowHeight)
+           .fill('#E8F5E9')
+           .stroke('#E0E0E0')
+           .lineWidth(0.5);
+        
+        doc.fontSize(8)
+           .font('Helvetica')
+           .fillColor('#2C3E50')
+           .text('Pagos QR', resumenTableX + 8, yPos + 5)
+           .text(`${rtp.pagos_qr} venta(s)`, resumenTableX + 140, yPos + 5)
+           .font('Helvetica-Bold')
+           .text(`Bs.${parseFloat(rtp.total_qr || 0).toFixed(2)}`, resumenTableX + 210, yPos + 5);
+        
+        yPos += resumenRowHeight;
+        
+        // Fila Efectivo
+        doc.rect(resumenTableX, yPos, resumenTableWidth, resumenRowHeight)
+           .fill('#FFF3E0')
+           .stroke('#E0E0E0')
+           .lineWidth(0.5);
+        
+        doc.fontSize(8)
+           .font('Helvetica')
+           .fillColor('#2C3E50')
+           .text('Pagos Efectivo', resumenTableX + 8, yPos + 5)
+           .text(`${rtp.pagos_efectivo} venta(s)`, resumenTableX + 140, yPos + 5)
+           .font('Helvetica-Bold')
+           .text(`Bs.${parseFloat(rtp.total_efectivo || 0).toFixed(2)}`, resumenTableX + 210, yPos + 5);
+        
+        yPos += resumenRowHeight;
+        
+        // Fila Total General
+        doc.rect(resumenTableX, yPos, resumenTableWidth, resumenRowHeight)
+           .fill('#E3F2FD')
+           .stroke('#2196F3')
+           .lineWidth(2);
+        
+        doc.fontSize(9)
+           .font('Helvetica-Bold')
+           .fillColor('#2C3E50')
+           .text('TOTAL GENERAL', resumenTableX + 8, yPos + 5)
+           .text(`${totalVentas} venta(s)`, resumenTableX + 140, yPos + 5)
+           .fillColor('#2196F3')
+           .text(`Bs.${totalIngresos.toFixed(2)}`, resumenTableX + 210, yPos + 5);
+        
+        yPos += resumenRowHeight + 12;
       }
 
-      // Estadísticas
+      // ========== ESTADÍSTICAS GENERALES EN TABLA ==========
       if (datos.estadisticas) {
-        yPos += 20;
-        doc.fontSize(14)
+        if (yPos > 700) {
+          doc.addPage();
+          yPos = 50;
+        }
+        
+        yPos += 15;
+        doc.fontSize(12)
            .font('Helvetica-Bold')
            .fillColor('#2C3E50')
            .text('ESTADÍSTICAS GENERALES', 50, yPos);
-
-        yPos += 25;
+        
+        yPos += 20;
         const stats = datos.estadisticas;
+        
+        const statsTableWidth = doc.page.width - 100;
+        const statsTableX = 50;
+        const statsRowHeight = 16;
+        
+        // Encabezado de tabla de estadísticas (más compacto)
+        doc.rect(statsTableX, yPos, statsTableWidth, statsRowHeight)
+           .fill('#34495E')
+           .stroke('#2C3E50')
+           .lineWidth(1);
+        
+        doc.fontSize(8)
+           .font('Helvetica-Bold')
+           .fillColor('#FFFFFF')
+           .text('Tipo', statsTableX + 8, yPos + 4)
+           .text('Límite', statsTableX + 100, yPos + 4)
+           .text('Vendidos', statsTableX + 170, yPos + 4)
+           .text('Dispon.', statsTableX + 240, yPos + 4)
+           .text('Escaneados', statsTableX + 310, yPos + 4)
+           .text('Faltantes', statsTableX + 390, yPos + 4);
+        
+        yPos += statsRowHeight;
 
         if (stats.tipo_evento === 'general' && stats.generales) {
           const gen = stats.generales;
-          doc.fontSize(11)
+          doc.rect(statsTableX, yPos, statsTableWidth, statsRowHeight)
+             .fill('#E3F2FD')
+             .stroke('#E0E0E0')
+             .lineWidth(0.5);
+          
+          doc.fontSize(8)
              .font('Helvetica')
-             .fillColor('#34495E')
-             .text(`Límite Total: ${gen.limite_total !== null ? gen.limite_total : 'N/A'}`, 70, yPos);
-          yPos += 20;
-          doc.text(`Vendidas: ${gen.vendidas}`, 70, yPos);
-          yPos += 20;
-          doc.text(`Disponibles: ${gen.disponibles !== null ? gen.disponibles : 'N/A'}`, 70, yPos);
-          yPos += 20;
-          doc.text(`Escaneadas: ${gen.escaneadas}`, 70, yPos);
-          yPos += 20;
-          doc.text(`Faltantes por Escanear: ${gen.total_faltantes}`, 70, yPos);
+             .fillColor('#2C3E50')
+             .text('Entradas Generales', statsTableX + 8, yPos + 4)
+             .text(gen.limite_total !== null ? gen.limite_total.toString() : 'N/A', statsTableX + 100, yPos + 4)
+             .text(gen.vendidas.toString(), statsTableX + 170, yPos + 4)
+             .text(gen.disponibles !== null ? gen.disponibles.toString() : 'N/A', statsTableX + 240, yPos + 4)
+             .text(gen.escaneadas.toString(), statsTableX + 310, yPos + 4)
+             .text(gen.total_faltantes.toString(), statsTableX + 390, yPos + 4);
+          
+          yPos += statsRowHeight + 8;
         } else if (stats.tipo_evento === 'especial') {
           if (stats.asientos) {
-            doc.fontSize(12)
-               .font('Helvetica-Bold')
-               .text('Asientos Individuales:', 70, yPos);
-            yPos += 20;
-            doc.fontSize(11)
+            doc.rect(statsTableX, yPos, statsTableWidth, statsRowHeight)
+               .fill('#E8F5E9')
+               .stroke('#E0E0E0')
+               .lineWidth(0.5);
+            
+            doc.fontSize(8)
                .font('Helvetica')
-               .text(`  Límite Total: ${stats.asientos.limite_total !== null ? stats.asientos.limite_total : 'N/A'}`, 90, yPos);
-            yPos += 20;
-            doc.text(`  Vendidos: ${stats.asientos.vendidas}`, 90, yPos);
-            yPos += 20;
-            doc.text(`  Escaneados: ${stats.asientos.escaneadas}`, 90, yPos);
-            yPos += 25;
+               .fillColor('#2C3E50')
+               .text('Asientos Individuales', statsTableX + 8, yPos + 4)
+               .text(stats.asientos.limite_total !== null ? stats.asientos.limite_total.toString() : 'N/A', statsTableX + 100, yPos + 4)
+               .text(stats.asientos.vendidas.toString(), statsTableX + 170, yPos + 4)
+               .text((stats.asientos.limite_total !== null && stats.asientos.limite_total > 0) ? (stats.asientos.limite_total - stats.asientos.vendidas).toString() : 'N/A', statsTableX + 240, yPos + 4)
+               .text(stats.asientos.escaneadas.toString(), statsTableX + 310, yPos + 4)
+               .text((stats.asientos.vendidas - stats.asientos.escaneadas).toString(), statsTableX + 390, yPos + 4);
+            
+            yPos += statsRowHeight;
           }
+          
           if (stats.mesas) {
-            doc.fontSize(12)
-               .font('Helvetica-Bold')
-               .text('Mesas:', 70, yPos);
-            yPos += 20;
-            doc.fontSize(11)
+            doc.rect(statsTableX, yPos, statsTableWidth, statsRowHeight)
+               .fill('#FFF3E0')
+               .stroke('#E0E0E0')
+               .lineWidth(0.5);
+            
+            doc.fontSize(8)
                .font('Helvetica')
-               .text(`  Límite Total: ${stats.mesas.limite_total !== null ? stats.mesas.limite_total : 'N/A'}`, 90, yPos);
-            yPos += 20;
-            doc.text(`  Vendidas: ${stats.mesas.vendidas}`, 90, yPos);
-            yPos += 20;
-            doc.text(`  Escaneadas: ${stats.mesas.escaneadas}`, 90, yPos);
+               .fillColor('#2C3E50')
+               .text('Mesas', statsTableX + 8, yPos + 4)
+               .text(stats.mesas.limite_total !== null ? stats.mesas.limite_total.toString() : 'N/A', statsTableX + 100, yPos + 4)
+               .text(stats.mesas.vendidas.toString(), statsTableX + 170, yPos + 4)
+               .text((stats.mesas.limite_total !== null && stats.mesas.limite_total > 0) ? (stats.mesas.limite_total - stats.mesas.vendidas).toString() : 'N/A', statsTableX + 240, yPos + 4)
+               .text(stats.mesas.escaneadas.toString(), statsTableX + 310, yPos + 4)
+               .text((stats.mesas.vendidas - stats.mesas.escaneadas).toString(), statsTableX + 390, yPos + 4);
+            
+            yPos += statsRowHeight;
           }
+          
+          if (stats.zonas_generales) {
+            const zg = stats.zonas_generales;
+            doc.rect(statsTableX, yPos, statsTableWidth, statsRowHeight)
+               .fill('#F3E5F5')
+               .stroke('#E0E0E0')
+               .lineWidth(0.5);
+            
+            doc.fontSize(8)
+               .font('Helvetica')
+               .fillColor('#2C3E50')
+               .text('Zonas Generales', statsTableX + 8, yPos + 4)
+               .text(zg.limite_total !== null ? zg.limite_total.toString() : 'N/A', statsTableX + 100, yPos + 4)
+               .text(zg.vendidas.toString(), statsTableX + 170, yPos + 4)
+               .text((zg.limite_total !== null && zg.limite_total > 0) ? (zg.limite_total - zg.vendidas).toString() : 'N/A', statsTableX + 240, yPos + 4)
+               .text(zg.escaneadas.toString(), statsTableX + 310, yPos + 4)
+               .text((zg.vendidas - zg.escaneadas).toString(), statsTableX + 390, yPos + 4);
+            
+            yPos += statsRowHeight;
+          }
+          
+          yPos += 8;
         }
       }
 
-      // Tabla de compras
+      // ========== COMPRAS DEL EVENTO - EN FORMATO TABLA ==========
       if (datos.compras && datos.compras.length > 0) {
-        yPos += 40;
+        yPos += 25;
         if (yPos > 700) {
           doc.addPage();
           yPos = 50;
         }
 
+        // Título de sección
         doc.fontSize(14)
            .font('Helvetica-Bold')
            .fillColor('#2C3E50')
-           .text('COMPRAS', 50, yPos);
-
-        yPos += 25;
-
-        // Encabezados de tabla
-        const tableTop = yPos;
+           .text('COMPRAS DEL EVENTO', 50, yPos);
+        
         doc.fontSize(9)
-           .font('Helvetica-Bold')
-           .fillColor('#FFFFFF')
-           .rect(50, tableTop, 495, 25)
+           .font('Helvetica')
+           .fillColor('#666')
+           .text(`Total: ${datos.compras.length} compra(s)`, 50, yPos + 18);
+
+        yPos += 35;
+
+        // Encabezados de la tabla
+        const tableTop = yPos;
+        const tableWidth = doc.page.width - 100; // 495 puntos disponibles
+        const rowHeight = 16;
+        
+        // Anchos de columnas optimizados para que quepa todo en una hoja
+        // Total debe ser <= 495 puntos
+        const colWidths = {
+          id: 25,
+          codigo: 65,
+          cliente: 75,
+          email: 85,
+          telefono: 60,
+          cantidad: 30,
+          total: 55,
+          tipo: 45,
+          estado: 60,
+          fecha: 60
+        };
+        
+        // Verificar que la suma no exceda el ancho disponible
+        const totalWidth = Object.values(colWidths).reduce((sum, width) => sum + width, 0);
+        if (totalWidth > tableWidth) {
+          // Ajustar proporcionalmente si es necesario
+          const scale = tableWidth / totalWidth;
+          Object.keys(colWidths).forEach(key => {
+            colWidths[key] = Math.floor(colWidths[key] * scale);
+          });
+        }
+
+        // Encabezado de tabla con fondo
+        doc.rect(50, tableTop, tableWidth, rowHeight + 3)
            .fill('#34495E')
-           .fillColor('#FFFFFF')
-           .text('ID', 55, tableTop + 8)
-           .text('Código', 85, tableTop + 8)
-           .text('Cliente', 150, tableTop + 8)
-           .text('Cant.', 260, tableTop + 8)
-           .text('Total', 295, tableTop + 8)
-           .text('Tipo', 350, tableTop + 8)
-           .text('Estado', 400, tableTop + 8)
-           .text('Fecha', 460, tableTop + 8);
+           .stroke('#2C3E50')
+           .lineWidth(1);
+        
+        let headerX = 51;
+        doc.fontSize(7)
+           .font('Helvetica-Bold')
+           .fillColor('#FFFFFF');
+        
+        doc.text('ID', headerX, tableTop + 5);
+        headerX += colWidths.id;
+        doc.text('Código', headerX, tableTop + 5);
+        headerX += colWidths.codigo;
+        doc.text('Cliente', headerX, tableTop + 5);
+        headerX += colWidths.cliente;
+        doc.text('Email', headerX, tableTop + 5);
+        headerX += colWidths.email;
+        doc.text('Tel.', headerX, tableTop + 5);
+        headerX += colWidths.telefono;
+        doc.text('Cant.', headerX, tableTop + 5);
+        headerX += colWidths.cantidad;
+        doc.text('Total', headerX, tableTop + 5);
+        headerX += colWidths.total;
+        doc.text('Tipo', headerX, tableTop + 5);
+        headerX += colWidths.tipo;
+        doc.text('Estado', headerX, tableTop + 5);
+        headerX += colWidths.estado;
+        doc.text('Fecha', headerX, tableTop + 5);
 
-        yPos = tableTop + 25;
+        yPos = tableTop + rowHeight + 3;
 
-        // Datos de la tabla
-        datos.compras.slice(0, 20).forEach((compra, index) => {
+        // Función para dibujar encabezados en nueva página
+        const dibujarEncabezados = (y) => {
+          doc.rect(50, y, tableWidth, rowHeight + 3)
+             .fill('#34495E')
+             .stroke('#2C3E50')
+             .lineWidth(1);
+          
+          let hX = 51;
+          doc.fontSize(7)
+             .font('Helvetica-Bold')
+             .fillColor('#FFFFFF');
+          
+          doc.text('ID', hX, y + 5);
+          hX += colWidths.id;
+          doc.text('Código', hX, y + 5);
+          hX += colWidths.codigo;
+          doc.text('Cliente', hX, y + 5);
+          hX += colWidths.cliente;
+          doc.text('Email', hX, y + 5);
+          hX += colWidths.email;
+          doc.text('Tel.', hX, y + 5);
+          hX += colWidths.telefono;
+          doc.text('Cant.', hX, y + 5);
+          hX += colWidths.cantidad;
+          doc.text('Total', hX, y + 5);
+          hX += colWidths.total;
+          doc.text('Tipo', hX, y + 5);
+          hX += colWidths.tipo;
+          doc.text('Estado', hX, y + 5);
+          hX += colWidths.estado;
+          doc.text('Fecha', hX, y + 5);
+        };
+
+        // Mostrar TODAS las compras en formato tabla
+        datos.compras.forEach((compra, index) => {
+          // Verificar si necesitamos nueva página
           if (yPos > 750) {
             doc.addPage();
             yPos = 50;
+            dibujarEncabezados(yPos);
+            yPos += rowHeight + 3;
           }
 
-          const rowColor = index % 2 === 0 ? '#F8F9FA' : '#FFFFFF';
-          doc.rect(50, yPos, 495, 20)
-             .fill(rowColor);
+          // Fondo de fila alternado
+          const rowColor = index % 2 === 0 ? '#FFFFFF' : '#F8F9FA';
+          doc.rect(50, yPos, tableWidth, rowHeight)
+             .fill(rowColor)
+             .stroke('#E0E0E0')
+             .lineWidth(0.5);
 
-          doc.fontSize(8)
+          let cellX = 51;
+          let cellY = yPos + 4;
+
+          // ID
+          doc.fontSize(6)
+             .font('Helvetica')
+             .fillColor('#666')
+             .text(compra.id.toString(), cellX, cellY);
+          cellX += colWidths.id;
+
+          // Código (solo últimos caracteres para ahorrar espacio)
+          const codigoCorto = compra.codigo_unico.length > 8 
+            ? compra.codigo_unico.substring(compra.codigo_unico.length - 8)
+            : compra.codigo_unico;
+          doc.fontSize(6)
              .font('Helvetica')
              .fillColor('#2C3E50')
-             .text(compra.id.toString(), 55, yPos + 6)
-             .text(compra.codigo_unico.substring(0, 8), 85, yPos + 6)
-             .text(compra.cliente_nombre.substring(0, 18), 150, yPos + 6)
-             .text(compra.cantidad.toString(), 265, yPos + 6)
-             .text(`Bs. ${parseFloat(compra.total || 0).toFixed(2)}`, 292, yPos + 6)
-             .text(compra.tipo_pago || '-', 350, yPos + 6)
-             .text(compra.estado.substring(0, 12), 400, yPos + 6)
-             .text(
-               compra.fecha_compra 
-                 ? new Date(compra.fecha_compra).toLocaleDateString('es-ES') 
-                 : '',
-               460,
-               yPos + 6
-             );
+             .text(codigoCorto, cellX, cellY);
+          cellX += colWidths.codigo;
 
-          yPos += 20;
+          // Cliente
+          doc.fontSize(6)
+             .font('Helvetica')
+             .fillColor('#2C3E50')
+             .text((compra.cliente_nombre || 'N/A').substring(0, 12), cellX, cellY);
+          cellX += colWidths.cliente;
+
+          // Email (solo parte antes del @)
+          const emailCorto = compra.cliente_email 
+            ? compra.cliente_email.split('@')[0].substring(0, 15)
+            : '-';
+          doc.fontSize(6)
+             .font('Helvetica')
+             .fillColor('#34495E')
+             .text(emailCorto, cellX, cellY);
+          cellX += colWidths.email;
+
+          // Teléfono
+          doc.fontSize(6)
+             .font('Helvetica')
+             .fillColor('#34495E')
+             .text((compra.cliente_telefono || '-').substring(0, 8), cellX, cellY);
+          cellX += colWidths.telefono;
+
+          // Cantidad
+          doc.fontSize(6)
+             .font('Helvetica-Bold')
+             .fillColor('#2196F3')
+             .text(compra.cantidad.toString(), cellX, cellY);
+          cellX += colWidths.cantidad;
+
+          // Total
+          const total = parseFloat(compra.total || 0);
+          doc.fontSize(6)
+             .font('Helvetica-Bold')
+             .fillColor(total > 0 ? '#4CAF50' : '#666')
+             .text(`${total.toFixed(2)}`, cellX, cellY);
+          cellX += colWidths.total;
+
+          // Tipo de pago (abreviado)
+          const tipoCorto = compra.tipo_pago === 'QR' ? 'QR' : 
+                           compra.tipo_pago === 'EFECTIVO' ? 'EF' : 
+                           (compra.tipo_pago || '-').substring(0, 4);
+          doc.fontSize(6)
+             .font('Helvetica')
+             .fillColor('#666')
+             .text(tipoCorto, cellX, cellY);
+          cellX += colWidths.tipo;
+
+          // Estado (abreviado)
+          const estadoColor = compra.estado === 'PAGO_REALIZADO' ? '#4CAF50' : 
+                             compra.estado === 'PAGO_PENDIENTE' ? '#FF9800' : 
+                             compra.estado === 'CANCELADO' ? '#F44336' : '#666';
+          const estadoTexto = compra.estado === 'PAGO_REALIZADO' ? 'PAG' :
+                             compra.estado === 'PAGO_PENDIENTE' ? 'PEND' :
+                             compra.estado === 'CANCELADO' ? 'CANC' : compra.estado.substring(0, 5);
+          doc.fontSize(6)
+             .font('Helvetica-Bold')
+             .fillColor(estadoColor)
+             .text(estadoTexto, cellX, cellY);
+          cellX += colWidths.estado;
+
+          // Fecha (solo día/mes)
+          if (compra.fecha_compra) {
+            const fecha = new Date(compra.fecha_compra).toLocaleDateString('es-ES', { 
+              day: '2-digit', 
+              month: '2-digit'
+            });
+            doc.fontSize(6)
+               .font('Helvetica')
+               .fillColor('#666')
+               .text(fecha, cellX, cellY);
+          } else {
+            doc.fontSize(6)
+               .font('Helvetica')
+               .fillColor('#666')
+               .text('-', cellX, cellY);
+          }
+
+          yPos += rowHeight;
         });
-
-        if (datos.compras.length > 20) {
-          doc.fontSize(9)
-             .fillColor('#7F8C8D')
-             .text(`... y ${datos.compras.length - 20} compras más`, 50, yPos + 10);
-        }
       }
 
-      // Footer
+      // ========== FOOTER SIMPLE ==========
       const pageHeight = doc.page.height;
       const pageWidth = doc.page.width;
-      doc.fontSize(8)
-         .fillColor('#95A5A6')
-         .text('plustiket.com - Tu plataforma de confianza', pageWidth / 2, pageHeight - 30, {
-           align: 'center'
-         });
+      
+      // Número de página (si hay múltiples páginas)
+      try {
+        const pages = doc.bufferedPageRange();
+        if (pages && pages.count > 0) {
+          for (let i = pages.start; i < pages.start + pages.count; i++) {
+            doc.switchToPage(i);
+            const pageNum = i - pages.start + 1;
+            doc.fontSize(8)
+               .font('Helvetica')
+               .fillColor('#95A5A6')
+               .text(`Página ${pageNum} de ${pages.count}`, pageWidth / 2, pageHeight - 30, {
+                 align: 'center'
+               });
+          }
+        }
+      } catch (error) {
+        // Si hay error al agregar números de página, continuar sin ellos
+        console.warn('No se pudieron agregar números de página:', error.message);
+      }
 
       doc.end();
 

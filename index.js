@@ -20,6 +20,7 @@ import comprasRoutes from './routes/compras.js';
 import reportesRoutes from './routes/reportes.js';
 import dashboardRoutes from './routes/dashboard.js';
 import seguridadRoutes from './routes/seguridad.js';
+import cuponesRoutes from './routes/cupones.js';
 import db from './config/db.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -88,6 +89,7 @@ app.use('/api/compras', comprasRoutes); // Rutas para compras
 app.use('/api/reportes', reportesRoutes); // Rutas para reportes
 app.use('/api/dashboard', dashboardRoutes); // Rutas para panel
 app.use('/api/seguridad', seguridadRoutes); // Rutas para seguridad (escaneo de QRs)
+app.use('/api/cupones', cuponesRoutes); // Rutas para cupones de descuento
 // app.use('/api/pagos', pagosRoutes); // Comentado temporalmente
 
 // Log para verificar rutas de seguridad

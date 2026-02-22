@@ -108,6 +108,8 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     tipoBoleto = asiento.tipo_precio_nombre.toUpperCase();
   } else if (mesa) {
     tipoBoleto = 'MESA';
+  } else if (entradaGeneral && entradaGeneral.area_nombre) {
+    tipoBoleto = `ZONA ${entradaGeneral.area_nombre.toUpperCase()}`;
   }
 
   doc.fontSize(10)
@@ -155,6 +157,16 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
        .font('Helvetica')
        .fillColor('#000000')
        .text(mesaTexto, margin, yPos, {
+         width: contentWidth,
+         align: 'center'
+       });
+    yPos += 10;
+  } else if (entradaGeneral && entradaGeneral.area_nombre) {
+    const zonaTexto = `Zona general: ${entradaGeneral.area_nombre}`;
+    doc.fontSize(8)
+       .font('Helvetica')
+       .fillColor('#000000')
+       .text(zonaTexto, margin, yPos, {
          width: contentWidth,
          align: 'center'
        });
@@ -385,7 +397,7 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
     });
   }
 
-  // Entradas generales
+  // Entradas generales (incluye zonas generales/personas de pie)
   if (entradasGenerales && entradasGenerales.length > 0) {
     const precioUnitario = parseFloat(compra.total || 0) / entradasGenerales.length;
     entradasGenerales.forEach((entrada, idx) => {
@@ -393,7 +405,8 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
       totalItems += subtotal;
 
       const itemText = `${evento.titulo || 'Evento'}`;
-      const detalleText = `General ${idx + 1} X ${precioUnitario.toFixed(2)}`;
+      const zonaLabel = entrada.area_nombre ? `Zona ${entrada.area_nombre}` : 'General';
+      const detalleText = `${zonaLabel} ${idx + 1} X ${precioUnitario.toFixed(2)}`;
       
       doc.fontSize(7)
          .font('Helvetica')

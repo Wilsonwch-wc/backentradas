@@ -172,7 +172,60 @@ export const loginConGoogle = async (req, res) => {
 
     console.log('👤 Email del usuario:', googleUser.email);
 
-    // Buscar o crear cliente
+    // 1) PRIMERO: verificar si el correo pertenece a un ADMIN/USUARIO DEL PANEL
+    //    Esto permite que un admin pueda entrar con Google OAuth también
+    const [usuarios] = await pool.execute(
+      `SELECT u.id, u.nombre_usuario, u.nombre_completo, u.correo, u.activo, u.id_rol, r.nombre as rol_nombre, u.telefono
+       FROM usuarios u
+       INNER JOIN roles r ON u.id_rol = r.id
+       WHERE u.correo = ?`,
+      [googleUser.email]
+    );
+
+    if (usuarios.length > 0) {
+      const usuario = usuarios[0];
+
+      // Verificar si está activo
+      if (!usuario.activo) {
+        return res.status(403).json({
+          success: false,
+          message: 'Usuario inactivo. Contacta al administrador'
+        });
+      }
+
+      // Generar token JWT como ADMIN (mismo formato que authController.login)
+      const token = jwt.sign(
+        {
+          id: usuario.id,
+          nombre_usuario: usuario.nombre_usuario,
+          nombre_completo: usuario.nombre_completo,
+          correo: usuario.correo,
+          rol: usuario.rol_nombre,
+          id_rol: usuario.id_rol
+        },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      return res.json({
+        success: true,
+        message: 'Login exitoso con Google',
+        data: {
+          token,
+          user: {
+            id: usuario.id,
+            nombre_usuario: usuario.nombre_usuario,
+            nombre_completo: usuario.nombre_completo,
+            correo: usuario.correo,
+            telefono: usuario.telefono,
+            rol: usuario.rol_nombre,
+            id_rol: usuario.id_rol
+          }
+        }
+      });
+    }
+
+    // 2) Si no es admin, buscar o crear cliente
     const [clientesExistentes] = await pool.execute(
       'SELECT * FROM clientes WHERE correo = ? OR (provider = ? AND provider_id = ?)',
       [googleUser.email, 'google', googleUser.sub]
@@ -454,6 +507,71 @@ export const loginCliente = async (req, res) => {
         message: 'Correo y contraseña son requeridos'
       });
     }
+
+    // 1) PRIMERO: intentar login como ADMIN/USUARIO DEL PANEL usando el correo
+    //    Esto permite que un mismo correo (ej. del administrador) entre tanto al panel
+    //    como a la parte de cliente usando este mismo formulario.
+    const [usuarios] = await pool.execute(
+      `SELECT u.id, u.nombre_usuario, u.nombre_completo, u.correo, u.password,
+              u.activo, u.id_rol, r.nombre as rol_nombre, u.telefono
+       FROM usuarios u
+       INNER JOIN roles r ON u.id_rol = r.id
+       WHERE u.correo = ?`,
+      [correo]
+    );
+
+    if (usuarios.length > 0) {
+      const usuario = usuarios[0];
+
+      // Verificar si está activo
+      if (!usuario.activo) {
+        return res.status(403).json({
+          success: false,
+          message: 'Usuario inactivo. Contacta al administrador'
+        });
+      }
+
+      // Verificar contraseña (texto plano por ahora)
+      if (usuario.password !== password) {
+        return res.status(401).json({
+          success: false,
+          message: 'Credenciales inválidas'
+        });
+      }
+
+      // Generar token JWT como ADMIN (mismo formato que authController.login)
+      const token = jwt.sign(
+        {
+          id: usuario.id,
+          nombre_usuario: usuario.nombre_usuario,
+          nombre_completo: usuario.nombre_completo,
+          correo: usuario.correo,
+          rol: usuario.rol_nombre,
+          id_rol: usuario.id_rol
+        },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      return res.json({
+        success: true,
+        message: 'Login exitoso',
+        data: {
+          token,
+          user: {
+            id: usuario.id,
+            nombre_usuario: usuario.nombre_usuario,
+            nombre_completo: usuario.nombre_completo,
+            correo: usuario.correo,
+            telefono: usuario.telefono,
+            rol: usuario.rol_nombre,
+            id_rol: usuario.id_rol
+          }
+        }
+      });
+    }
+
+    // 2) Si no es admin, intentar login como CLIENTE normal
 
     // Buscar cliente
     const [clientes] = await pool.execute(

@@ -1,7 +1,7 @@
 import pool from '../config/db.js';
 import { generarReporteExcel, generarReportePDF } from '../services/exportService.js';
 
-const buildDetalleCompraEspecial = (asientos = [], mesas = [], totalEntradas = 0) => {
+const buildDetalleCompraEspecial = (asientos = [], mesas = [], areasPersonas = [], totalEntradas = 0) => {
   const partes = [];
 
   if (mesas.length > 0) {
@@ -22,6 +22,13 @@ const buildDetalleCompraEspecial = (asientos = [], mesas = [], totalEntradas = 0
       })
       .join(', ');
     partes.push(`Sillas: ${asientosLista}`);
+  }
+
+  if (areasPersonas.length > 0) {
+    const zonasLista = areasPersonas
+      .map((ap) => `${ap.area_nombre || `Área ${ap.area_id}`}: ${ap.cantidad} p.`)
+      .join(', ');
+    partes.push(`Zonas generales: ${zonasLista}`);
   }
 
   if (partes.length === 0 && totalEntradas > 0) {
@@ -101,6 +108,8 @@ export const obtenerReportePorEvento = async (req, res) => {
           c.total,
           c.estado,
           c.tipo_pago,
+          c.tipo_venta,
+          c.precio_original,
           c.fecha_compra,
           c.fecha_pago,
           c.fecha_confirmacion
@@ -114,6 +123,7 @@ export const obtenerReportePorEvento = async (req, res) => {
     const compraIds = compras.map((c) => c.id);
     let asientos = [];
     let mesas = [];
+    let areasPersonas = [];
 
     if (compraIds.length > 0) {
       [asientos] = await pool.query(
@@ -154,6 +164,19 @@ export const obtenerReportePorEvento = async (req, res) => {
         `,
         [compraIds]
       );
+
+      // Áreas personas (zonas generales - personas de pie)
+      try {
+        [areasPersonas] = await pool.query(
+          `SELECT cap.id, cap.compra_id, cap.area_id, cap.cantidad, cap.precio_unitario, cap.precio_total, cap.estado,
+                  ar.nombre as area_nombre
+           FROM compras_areas_personas cap
+           INNER JOIN areas_layout ar ON cap.area_id = ar.id
+           WHERE cap.compra_id IN (?)
+           ORDER BY ar.nombre`,
+          [compraIds]
+        );
+      } catch (_) {}
     }
 
     const asientosPorCompra = asientos.reduce((acc, asiento) => {
@@ -168,13 +191,21 @@ export const obtenerReportePorEvento = async (req, res) => {
       return acc;
     }, {});
 
+    const areasPersonasPorCompra = areasPersonas.reduce((acc, ap) => {
+      if (!acc[ap.compra_id]) acc[ap.compra_id] = [];
+      acc[ap.compra_id].push(ap);
+      return acc;
+    }, {});
+
     const comprasConDetalle = compras.map((compra) => {
       const detalleAsientos = asientosPorCompra[compra.id] || [];
       const detalleMesas = mesasPorCompra[compra.id] || [];
+      const detalleAreasPersonas = areasPersonasPorCompra[compra.id] || [];
 
       const totalEntradasEspecial =
         detalleAsientos.length +
-        detalleMesas.reduce((acc, mesa) => acc + (mesa.cantidad_sillas || 0), 0);
+        detalleMesas.reduce((acc, mesa) => acc + (mesa.cantidad_sillas || 0), 0) +
+        detalleAreasPersonas.reduce((acc, ap) => acc + (ap.cantidad || 0), 0);
 
       const totalEntradas =
         evento.tipo_evento === 'especial'
@@ -185,10 +216,11 @@ export const obtenerReportePorEvento = async (req, res) => {
         ...compra,
         asientos: detalleAsientos,
         mesas: detalleMesas,
+        areas_personas: detalleAreasPersonas,
         total_entradas: totalEntradas,
         detalle_compra:
           evento.tipo_evento === 'especial'
-            ? buildDetalleCompraEspecial(detalleAsientos, detalleMesas, totalEntradas)
+            ? buildDetalleCompraEspecial(detalleAsientos, detalleMesas, detalleAreasPersonas, totalEntradas)
             : `${totalEntradas} entrada(s) general`
       };
     });
@@ -199,9 +231,13 @@ export const obtenerReportePorEvento = async (req, res) => {
         const entradas = compra.total_entradas || 0;
         acc.entradas_totales += entradas;
 
+        const entradasZonaGeneral = (compra.areas_personas || []).reduce((s, ap) => s + (ap.cantidad || 0), 0);
+        acc.entradas_zonas_generales += entradasZonaGeneral;
+
         if (compra.estado === 'PAGO_REALIZADO' || compra.estado === 'ENTRADA_USADA') {
           acc.pagos_realizados += 1;
           acc.entradas_confirmadas += entradas;
+          if (entradasZonaGeneral > 0) acc.entradas_zonas_generales_confirmadas += entradasZonaGeneral;
           // Acumular por tipo de pago
           const totalCompra = parseFloat(compra.total || 0);
           if (compra.tipo_pago === 'QR') {
@@ -214,6 +250,7 @@ export const obtenerReportePorEvento = async (req, res) => {
         } else if (compra.estado === 'PAGO_PENDIENTE') {
           acc.pagos_pendientes += 1;
           acc.entradas_pendientes += entradas;
+          if (entradasZonaGeneral > 0) acc.entradas_zonas_generales_pendientes += entradasZonaGeneral;
         } else if (compra.estado === 'CANCELADO') {
           acc.canceladas += 1;
         }
@@ -228,6 +265,9 @@ export const obtenerReportePorEvento = async (req, res) => {
         entradas_totales: 0,
         entradas_confirmadas: 0,
         entradas_pendientes: 0,
+        entradas_zonas_generales: 0,
+        entradas_zonas_generales_confirmadas: 0,
+        entradas_zonas_generales_pendientes: 0,
         pagos_qr: 0,
         pagos_efectivo: 0,
         total_qr: 0,
@@ -282,10 +322,11 @@ export const exportarReporte = async (req, res) => {
 
     const evento = eventos[0];
 
-    // Obtener compras (incluye tipo_pago para reportes)
+    // Obtener compras (incluye tipo_pago, tipo_venta para reportes)
     const [compras] = await pool.execute(
       `SELECT c.id, c.codigo_unico, c.cliente_nombre, c.cliente_email, 
               c.cliente_telefono, c.cantidad, c.total, c.estado, c.tipo_pago,
+              c.tipo_venta, c.precio_original,
               c.fecha_compra, c.fecha_pago, c.fecha_confirmacion
        FROM compras c
        WHERE c.evento_id = ?
@@ -367,6 +408,41 @@ export const exportarReporte = async (req, res) => {
           [evento_id]
         );
         
+        // Zonas generales (personas de pie)
+        let zonasGenerales = null;
+        try {
+          const [statsZonas] = await pool.execute(
+            `SELECT COALESCE(SUM(cap.cantidad), 0) as total_vendidas
+             FROM compras_areas_personas cap
+             INNER JOIN compras c ON cap.compra_id = c.id
+             WHERE c.evento_id = ? AND c.estado = 'PAGO_REALIZADO' AND cap.estado = 'CONFIRMADO'`,
+            [evento_id]
+          );
+          const [totalZonas] = await pool.execute(
+            `SELECT COALESCE(SUM(ar.capacidad_personas), 0) as total_capacidad
+             FROM areas_layout ar
+             WHERE ar.evento_id = ? AND ar.tipo_area = 'PERSONAS'`,
+            [evento_id]
+          );
+          const [escaneadasZonas] = await pool.execute(
+            `SELECT COUNT(*) as total
+             FROM compras_entradas_generales eg
+             INNER JOIN compras c ON eg.compra_id = c.id
+             WHERE c.evento_id = ? AND eg.area_id IS NOT NULL AND eg.escaneado = TRUE`,
+            [evento_id]
+          );
+          const vendidasZonas = parseInt(statsZonas[0]?.total_vendidas || 0);
+          const capacidadZonas = parseInt(totalZonas[0]?.total_capacidad || 0);
+          const escaneadasZonasCount = parseInt(escaneadasZonas[0]?.total || 0);
+          zonasGenerales = {
+            limite_total: capacidadZonas || null,
+            vendidas: vendidasZonas,
+            disponibles: capacidadZonas > 0 ? Math.max(0, capacidadZonas - vendidasZonas) : null,
+            escaneadas: escaneadasZonasCount,
+            total_faltantes: vendidasZonas - escaneadasZonasCount
+          };
+        } catch (_) {}
+
         estadisticas = {
           tipo_evento: 'especial',
           asientos: {
@@ -389,7 +465,8 @@ export const exportarReporte = async (req, res) => {
               escaneadas: parseInt(statsMesas[0]?.total_sillas_escaneadas || 0),
               total_faltantes: parseInt(statsMesas[0]?.total_sillas_confirmadas || 0) - parseInt(statsMesas[0]?.total_sillas_escaneadas || 0)
             }
-          }
+          },
+          zonas_generales: zonasGenerales
         };
       }
     } catch (err) {

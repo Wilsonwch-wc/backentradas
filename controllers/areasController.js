@@ -6,10 +6,12 @@ export const obtenerAreasPorEvento = async (req, res) => {
     const { eventoId } = req.params;
 
     const [areas] = await pool.execute(
-      `SELECT id, evento_id, nombre, posicion_x, posicion_y, ancho, alto, color, created_at, updated_at
+      `SELECT id, evento_id, nombre, posicion_x, posicion_y, ancho, alto, color,
+              tipo_area, capacidad_personas, orden, forma, tipo_precio_id,
+              created_at, updated_at
        FROM areas_layout
        WHERE evento_id = ?
-       ORDER BY nombre ASC`,
+       ORDER BY COALESCE(orden, 999), nombre ASC`,
       [eventoId]
     );
 
@@ -63,7 +65,7 @@ export const obtenerAreaPorId = async (req, res) => {
 // Crear una nueva área
 export const crearArea = async (req, res) => {
   try {
-    const { evento_id, nombre, posicion_x, posicion_y, ancho, alto, color } = req.body;
+    const { evento_id, nombre, posicion_x, posicion_y, ancho, alto, color, tipo_area = 'SILLAS', capacidad_personas, orden, forma = 'rectangulo', tipo_precio_id } = req.body;
 
     // Validaciones
     if (!evento_id || !nombre || posicion_x === undefined || posicion_y === undefined || !ancho || !alto) {
@@ -71,6 +73,19 @@ export const crearArea = async (req, res) => {
         success: false,
         message: 'Faltan campos requeridos: evento_id, nombre, posicion_x, posicion_y, ancho, alto'
       });
+    }
+
+    const tipoAreaValido = ['SILLAS', 'MESAS', 'PERSONAS'].includes(tipo_area) ? tipo_area : 'SILLAS';
+    const formaValida = ['rectangulo', 'circulo'].includes(forma) ? forma : 'rectangulo';
+
+    if (tipoAreaValido === 'PERSONAS') {
+      const cap = parseInt(capacidad_personas, 10);
+      if (!cap || cap <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Para áreas de tipo PERSONAS (zona general) la capacidad debe ser mayor a 0'
+        });
+      }
     }
 
     // Validar que el evento existe y es especial
@@ -101,16 +116,21 @@ export const crearArea = async (req, res) => {
       });
     }
 
+    const capPersonas = tipoAreaValido === 'PERSONAS' ? parseInt(capacidad_personas, 10) : null;
+    const tipoPrecioId = tipo_precio_id ? parseInt(tipo_precio_id, 10) : null;
+
     // Insertar nueva área
     const [result] = await pool.execute(
-      `INSERT INTO areas_layout (evento_id, nombre, posicion_x, posicion_y, ancho, alto, color)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [evento_id, nombre, posicion_x, posicion_y, ancho, alto, color || '#CCCCCC']
+      `INSERT INTO areas_layout (evento_id, nombre, posicion_x, posicion_y, ancho, alto, color, tipo_area, capacidad_personas, orden, forma, tipo_precio_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [evento_id, nombre, posicion_x, posicion_y, ancho, alto, color || '#CCCCCC', tipoAreaValido, capPersonas, orden || null, formaValida, tipoPrecioId]
     );
 
     // Obtener el área creada
     const [areas] = await pool.execute(
-      `SELECT id, evento_id, nombre, posicion_x, posicion_y, ancho, alto, color, created_at, updated_at
+      `SELECT id, evento_id, nombre, posicion_x, posicion_y, ancho, alto, color,
+              tipo_area, capacidad_personas, orden, forma, tipo_precio_id,
+              created_at, updated_at
        FROM areas_layout
        WHERE id = ?`,
       [result.insertId]
@@ -135,7 +155,7 @@ export const crearArea = async (req, res) => {
 export const actualizarArea = async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombre, posicion_x, posicion_y, ancho, alto, color } = req.body;
+    const { nombre, posicion_x, posicion_y, ancho, alto, color, tipo_area, capacidad_personas, orden, forma, tipo_precio_id } = req.body;
 
     // Verificar si el área existe
     const [areasExistentes] = await pool.execute(
@@ -190,6 +210,27 @@ export const actualizarArea = async (req, res) => {
       campos.push('color = ?');
       valores.push(color);
     }
+    if (tipo_area !== undefined && ['SILLAS', 'MESAS', 'PERSONAS'].includes(tipo_area)) {
+      campos.push('tipo_area = ?');
+      valores.push(tipo_area);
+    }
+    if (capacidad_personas !== undefined) {
+      campos.push('capacidad_personas = ?');
+      const cap = parseInt(capacidad_personas, 10);
+      valores.push(cap > 0 ? cap : null);
+    }
+    if (orden !== undefined) {
+      campos.push('orden = ?');
+      valores.push(orden);
+    }
+    if (forma !== undefined && ['rectangulo', 'circulo'].includes(forma)) {
+      campos.push('forma = ?');
+      valores.push(forma);
+    }
+    if (tipo_precio_id !== undefined) {
+      campos.push('tipo_precio_id = ?');
+      valores.push(tipo_precio_id ? parseInt(tipo_precio_id, 10) : null);
+    }
 
     if (campos.length === 0) {
       return res.status(400).json({
@@ -207,7 +248,9 @@ export const actualizarArea = async (req, res) => {
 
     // Obtener el área actualizada
     const [areas] = await pool.execute(
-      `SELECT id, evento_id, nombre, posicion_x, posicion_y, ancho, alto, color, created_at, updated_at
+      `SELECT id, evento_id, nombre, posicion_x, posicion_y, ancho, alto, color,
+              tipo_area, capacidad_personas, orden, forma, tipo_precio_id,
+              created_at, updated_at
        FROM areas_layout
        WHERE id = ?`,
       [id]
