@@ -312,7 +312,11 @@ export const borrarTodosLosDatos = async (req, res) => {
     // Tablas de compras relacionadas
     await connection.execute('DELETE FROM compras_asientos');
     await connection.execute('DELETE FROM compras_mesas');
+    try { await connection.execute('DELETE FROM compras_entradas_generales'); } catch (_) {}
+    try { await connection.execute('DELETE FROM compras_areas_personas'); } catch (_) {}
+    try { await connection.execute('DELETE FROM cupones_usados'); } catch (_) {}
     await connection.execute('DELETE FROM compras');
+    try { await connection.execute('DELETE FROM cupones'); } catch (_) {}
     await connection.execute('DELETE FROM pagos');
     
     // Tablas de layout y asientos/mesas
@@ -321,10 +325,9 @@ export const borrarTodosLosDatos = async (req, res) => {
     await connection.execute('DELETE FROM areas_layout');
     await connection.execute('DELETE FROM tipos_precio_evento');
     
-    // Tablas principales
+    // Tablas principales (no borrar: usuarios, roles, contacto_info)
     await connection.execute('DELETE FROM eventos');
     await connection.execute('DELETE FROM clientes');
-    await connection.execute('DELETE FROM contacto_info');
 
     // Reactivar las verificaciones de foreign keys
     await connection.execute('SET FOREIGN_KEY_CHECKS = 1');
@@ -334,7 +337,7 @@ export const borrarTodosLosDatos = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Todos los datos han sido eliminados exitosamente (excepto usuarios y roles)'
+      message: 'Todos los datos han sido eliminados (se conservan usuarios, roles y datos de contacto)'
     });
   } catch (error) {
     await connection.rollback();
