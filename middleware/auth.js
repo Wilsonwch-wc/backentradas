@@ -57,13 +57,42 @@ export const requireAdmin = (req, res, next) => {
     });
   }
 
-  if (req.user.rol !== 'admin') {
+  const rol = (req.user.rol || '').toLowerCase();
+  if (rol !== 'admin') {
     return res.status(403).json({ 
       success: false,
       message: 'Se requieren permisos de administrador' 
     });
   }
 
+  next();
+};
+
+// Verificar token si viene en la petición; no fallar si no hay token (para rutas públicas opcionales)
+export const optionalAuth = (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      next();
+      return;
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'tu_secreto_jwt_aqui');
+    req.user = decoded;
+    next();
+  } catch (_) {
+    next();
+  }
+};
+
+// Admin o vendedor; para vendedor luego se valida que la compra sea suya (usuario_id)
+export const requireAdminOrVendedor = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, message: 'Usuario no autenticado' });
+  }
+  const rol = (req.user.rol || '').toLowerCase();
+  if (rol !== 'admin' && rol !== 'vendedor') {
+    return res.status(403).json({ success: false, message: 'Se requieren permisos de administrador o vendedor' });
+  }
   next();
 };
 

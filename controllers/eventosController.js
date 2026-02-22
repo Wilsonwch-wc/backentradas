@@ -164,21 +164,7 @@ export const crearEvento = async (req, res) => {
       }
     }
 
-    // Validar limite_entradas para eventos generales
-    if (tipoEventoValido === 'general') {
-      if (limite_entradas === undefined || limite_entradas === null || limite_entradas === '') {
-        return res.status(400).json({
-          success: false,
-          message: 'El límite de entradas es requerido para eventos generales'
-        });
-      }
-      if (isNaN(limite_entradas) || parseInt(limite_entradas) < 1) {
-        return res.status(400).json({
-          success: false,
-          message: 'El límite de entradas debe ser un número válido mayor a 0'
-        });
-      }
-    }
+    // Para eventos generales el límite lo define cada tipo de precio (VIP, General, etc.), no el evento.
 
     // Verificar columnas disponibles
     const [columnas] = await pool.execute(columnasEventoQuery);

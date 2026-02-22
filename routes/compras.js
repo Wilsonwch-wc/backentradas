@@ -19,7 +19,7 @@ import {
   desmarcarEscaneo,
   obtenerEntradasEscaneadas
 } from '../controllers/comprasController.js';
-import { verifyToken } from '../middleware/auth.js';
+import { verifyToken, optionalAuth, requireAdminOrVendedor, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -43,8 +43,8 @@ router.post('/desmarcar-escaneo', verifyToken, desmarcarEscaneo);
 // Obtener todas las entradas escaneadas
 router.get('/entradas-escaneadas', verifyToken, obtenerEntradasEscaneadas);
 
-// Crear compra (público, no requiere autenticación)
-router.post('/', crearCompra);
+// Crear compra (público; si hay token de admin/vendedor se guarda usuario_id)
+router.post('/', optionalAuth, crearCompra);
 
 // Obtener compra por código (público, para que el admin pueda buscar)
 router.get('/codigo/:codigo', obtenerCompraPorCodigo);
@@ -55,14 +55,14 @@ router.get('/ocupados/:evento_id', obtenerAsientosOcupados);
 // Obtener compras del cliente logueado (requiere autenticación - cliente)
 router.get('/mis-compras', verifyToken, obtenerMisCompras);
 
-// Obtener todas las compras (requiere autenticación - solo admin)
-router.get('/', verifyToken, obtenerCompras);
+// Obtener todas las compras (admin: todas; vendedor: solo las suyas)
+router.get('/', verifyToken, requireAdminOrVendedor, obtenerCompras);
 
-// Confirmar pago (requiere autenticación - solo admin)
-router.put('/:id/confirmar-pago', verifyToken, confirmarPago);
+// Confirmar pago (admin o vendedor; vendedor solo sus compras)
+router.put('/:id/confirmar-pago', verifyToken, requireAdminOrVendedor, confirmarPago);
 
-// Cancelar compra (requiere autenticación - solo admin)
-router.put('/:id/cancelar', verifyToken, cancelarCompra);
+// Cancelar compra (admin o vendedor solo sus compras)
+router.put('/:id/cancelar', verifyToken, requireAdminOrVendedor, cancelarCompra);
 
 // Reenviar boleto (requiere autenticación - solo admin)
 router.post('/:id/reenviar-boleto', verifyToken, reenviarBoleto);
@@ -80,8 +80,8 @@ router.post('/:id/enviar-email', verifyToken, enviarBoletoPorEmail);
 router.get('/whatsapp-web/estado', verifyToken, obtenerEstadoWhatsAppWeb);
 router.post('/whatsapp-web/reiniciar', verifyToken, reiniciarSesionWhatsAppWeb);
 
-// Eliminar compra completamente (requiere autenticación - solo admin)
-router.delete('/:id', verifyToken, eliminarCompra);
+// Eliminar compra (solo admin)
+router.delete('/:id', verifyToken, requireAdmin, eliminarCompra);
 
 export default router;
 

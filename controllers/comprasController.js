@@ -31,7 +31,8 @@ export const crearCompra = async (req, res) => {
       codigo_cupon, // Código del cupón de descuento
       asientos, // Array de objetos { id, precio }
       mesas, // Array de objetos { mesa_id, cantidad_sillas, precio_total, sillas }
-      areas_personas // Array de objetos { area_id, cantidad, precio_unitario? } para zona general/personas de pie
+      areas_personas, // Array de objetos { area_id, cantidad, precio_unitario? } para zona general/personas de pie
+      entradas_generales // Array de { tipo_precio_id, cantidad } para evento general con múltiples precios (VIP, General, etc.)
     } = req.body;
 
     // Validaciones básicas
@@ -49,7 +50,7 @@ export const crearCompra = async (req, res) => {
     let descuentoCupon = null;
     let totalAntesDescuento = totalFinal;
 
-    // Calcular cantidad real: asientos + sillas de mesas + personas en áreas
+    // Calcular cantidad real: asientos + sillas de mesas + personas en áreas + entradas generales por tipo
     let cantidadFinal = parseInt(cantidad, 10) || 0;
     if (asientos && asientos.length > 0) cantidadFinal = Math.max(cantidadFinal, asientos.length);
     if (mesas && mesas.length > 0) {
@@ -59,6 +60,10 @@ export const crearCompra = async (req, res) => {
     if (areas_personas && areas_personas.length > 0) {
       const personasAreas = areas_personas.reduce((s, ap) => s + (parseInt(ap.cantidad, 10) || 0), 0);
       cantidadFinal = Math.max(cantidadFinal, personasAreas);
+    }
+    if (entradas_generales && Array.isArray(entradas_generales) && entradas_generales.length > 0) {
+      const sumaEntradasGeneral = entradas_generales.reduce((s, eg) => s + (parseInt(eg.cantidad, 10) || 0), 0);
+      cantidadFinal = Math.max(cantidadFinal, sumaEntradasGeneral);
     }
 
     if (tipoVentaValido === 'REGALO_ADMIN') {
@@ -98,24 +103,7 @@ export const crearCompra = async (req, res) => {
         });
       }
     } else {
-      // Evento general: validar límite de entradas si existe
-      const limite = evento.limite_entradas ? parseInt(evento.limite_entradas) : null;
-      if (limite && limite > 0) {
-        const [sumas] = await pool.execute(
-          `SELECT COALESCE(SUM(cantidad),0) AS reservadas
-           FROM compras
-           WHERE evento_id = ? AND estado IN ('PAGO_PENDIENTE','PAGO_REALIZADO')`,
-          [evento_id]
-        );
-        const reservadas = parseInt(sumas[0].reservadas || 0);
-        const cantidadAValidar = cantidadFinal || parseInt(cantidad, 10) || 0;
-        if (reservadas + cantidadAValidar > limite) {
-          return res.status(409).json({
-            success: false,
-            message: `No hay suficientes entradas disponibles. Disponibles: ${Math.max(limite - reservadas, 0)}`
-          });
-        }
-      }
+      // Evento general: el cupo lo define cada tipo de precio (límite por tipo), no el evento
     }
 
     // Validar y aplicar cupón si se proporciona (solo para ventas normales)
@@ -228,15 +216,36 @@ export const crearCompra = async (req, res) => {
         intentos++;
       }
 
-      // Crear la compra
-      const [result] = await connection.execute(
-        `INSERT INTO compras 
-         (codigo_unico, evento_id, cliente_nombre, cliente_email, cliente_telefono, cantidad, total, estado, tipo_venta, precio_original, cupon_id, descuento_cupon)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'PAGO_PENDIENTE', ?, ?, ?, ?)`,
-        [codigoUnico, evento_id, cliente_nombre, cliente_email || null, cliente_telefono || null, cantidadFinal, totalFinal, tipoVentaValido, precioOriginalFinal, cuponId, descuentoCupon]
-      );
+      // Si hay usuario logueado admin o vendedor, registrar quién realizó la venta
+      let usuarioId = null;
+      const rol = (req.user?.rol || '').toLowerCase();
+      if (req.user && (rol === 'admin' || rol === 'vendedor')) {
+        usuarioId = req.user.id;
+      }
 
-      const compraId = result.insertId;
+      let compraId;
+      try {
+        const [result] = await connection.execute(
+          `INSERT INTO compras 
+           (codigo_unico, evento_id, cliente_nombre, cliente_email, cliente_telefono, cantidad, total, estado, tipo_venta, precio_original, cupon_id, descuento_cupon, usuario_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'PAGO_PENDIENTE', ?, ?, ?, ?, ?)`,
+          [codigoUnico, evento_id, cliente_nombre, cliente_email || null, cliente_telefono || null, cantidadFinal, totalFinal, tipoVentaValido, precioOriginalFinal, cuponId, descuentoCupon, usuarioId]
+        );
+        compraId = result.insertId;
+      } catch (err) {
+        const msg = (err.message || '').toLowerCase();
+        if (msg.includes('usuario_id') || err.code === 'ER_BAD_FIELD_ERROR') {
+          const [result] = await connection.execute(
+            `INSERT INTO compras 
+             (codigo_unico, evento_id, cliente_nombre, cliente_email, cliente_telefono, cantidad, total, estado, tipo_venta, precio_original, cupon_id, descuento_cupon)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'PAGO_PENDIENTE', ?, ?, ?, ?)`,
+            [codigoUnico, evento_id, cliente_nombre, cliente_email || null, cliente_telefono || null, cantidadFinal, totalFinal, tipoVentaValido, precioOriginalFinal, cuponId, descuentoCupon]
+          );
+          compraId = result.insertId;
+        } else {
+          throw err;
+        }
+      }
 
       // Si se usó un cupón, actualizar contador y registrar uso
       if (cuponId) {
@@ -431,6 +440,60 @@ export const crearCompra = async (req, res) => {
         }
       }
 
+      // Evento general con múltiples tipos de precio (VIP, General, Gradería): validar límites y guardar detalle
+      if (evento.tipo_evento === 'general' && entradas_generales && Array.isArray(entradas_generales) && entradas_generales.length > 0) {
+        const [tiposDelEvento] = await connection.execute(
+          'SELECT id, precio, limite FROM tipos_precio_evento WHERE evento_id = ? AND activo = 1',
+          [evento_id]
+        );
+        const idsValidos = new Set(tiposDelEvento.map(t => t.id));
+        const limitePorTipo = Object.fromEntries(tiposDelEvento.map(t => [t.id, t.limite != null ? parseInt(t.limite, 10) : null]));
+
+        for (const eg of entradas_generales) {
+          const tipoId = parseInt(eg.tipo_precio_id, 10);
+          const cant = parseInt(eg.cantidad, 10) || 0;
+          if (!tipoId || cant < 1) continue;
+          if (!idsValidos.has(tipoId)) {
+            await connection.rollback();
+            connection.release();
+            return res.status(400).json({
+              success: false,
+              message: `Tipo de precio ${tipoId} no válido para este evento`
+            });
+          }
+          const limiteTipo = limitePorTipo[tipoId];
+          if (limiteTipo != null) {
+            const [egVendidas] = await connection.execute(
+              `SELECT COUNT(*) AS total FROM compras_entradas_generales eg
+               INNER JOIN compras c ON eg.compra_id = c.id
+               WHERE eg.tipo_precio_id = ? AND c.evento_id = ? AND c.estado IN ('PAGO_REALIZADO','ENTRADA_USADA')`,
+              [tipoId, evento_id]
+            );
+            const [dgReservadas] = await connection.execute(
+              `SELECT COALESCE(SUM(cdg.cantidad), 0) AS total FROM compras_detalle_general cdg
+               INNER JOIN compras c ON cdg.compra_id = c.id
+               WHERE cdg.tipo_precio_id = ? AND c.evento_id = ? AND c.estado = 'PAGO_PENDIENTE' AND c.id != ?`,
+              [tipoId, evento_id, compraId]
+            );
+            const yaVendidas = parseInt(egVendidas[0]?.total || 0, 10) + parseInt(dgReservadas[0]?.total || 0, 10);
+            if (yaVendidas + cant > limiteTipo) {
+              const [tipoNombre] = await connection.execute('SELECT nombre FROM tipos_precio_evento WHERE id = ?', [tipoId]);
+              const nombreTipo = tipoNombre[0]?.nombre || 'Este tipo';
+              await connection.rollback();
+              connection.release();
+              return res.status(409).json({
+                success: false,
+                message: `${nombreTipo}: no hay suficientes entradas. Disponibles: ${Math.max(0, limiteTipo - yaVendidas)}`
+              });
+            }
+          }
+          await connection.execute(
+            `INSERT INTO compras_detalle_general (compra_id, tipo_precio_id, cantidad) VALUES (?, ?, ?)`,
+            [compraId, tipoId, cant]
+          );
+        }
+      }
+
       // Confirmar transacción
       await connection.commit();
 
@@ -569,13 +632,16 @@ export const obtenerCompraPorCodigo = async (req, res) => {
         eg.id,
         eg.compra_id,
         eg.area_id,
+        eg.tipo_precio_id,
         eg.codigo_escaneo,
         eg.escaneado,
         eg.fecha_escaneo,
         eg.usuario_escaneo_id,
-        ar.nombre as area_nombre
+        ar.nombre as area_nombre,
+        tp.nombre as tipo_precio_nombre
        FROM compras_entradas_generales eg
        LEFT JOIN areas_layout ar ON eg.area_id = ar.id
+       LEFT JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
        WHERE eg.compra_id = ?
        ORDER BY eg.id ASC`,
       [compra.id]
@@ -594,6 +660,20 @@ export const obtenerCompraPorCodigo = async (req, res) => {
       areasPersonas = apRows;
     } catch (_) {}
 
+    // Para compras PENDIENTES con evento general: el detalle está en compras_detalle_general (tipo + cantidad)
+    let detalleGeneral = [];
+    try {
+      const [dgRows] = await pool.execute(
+        `SELECT cdg.id, cdg.tipo_precio_id, cdg.cantidad, tp.nombre as tipo_precio_nombre, tp.precio
+         FROM compras_detalle_general cdg
+         LEFT JOIN tipos_precio_evento tp ON cdg.tipo_precio_id = tp.id
+         WHERE cdg.compra_id = ?
+         ORDER BY cdg.id`,
+        [compra.id]
+      );
+      detalleGeneral = dgRows;
+    } catch (_) {}
+
     res.json({
       success: true,
       data: {
@@ -601,6 +681,7 @@ export const obtenerCompraPorCodigo = async (req, res) => {
         asientos,
         mesas,
         entradas_generales: entradasGenerales,
+        detalle_general: detalleGeneral,
         areas_personas: areasPersonas
       }
     });
@@ -1752,10 +1833,11 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
   }
 };
 
-// Obtener todas las compras (para admin)
+// Obtener todas las compras (admin: todas; vendedor: solo las suyas por usuario_id)
 export const obtenerCompras = async (req, res) => {
   try {
     const { estado, evento_id } = req.query;
+    const rol = (req.user?.rol || '').toLowerCase();
 
     let query = `
       SELECT c.*, e.titulo as evento_titulo, e.hora_inicio as evento_fecha
@@ -1764,6 +1846,11 @@ export const obtenerCompras = async (req, res) => {
       WHERE 1=1
     `;
     const params = [];
+
+    if (rol === 'vendedor' && req.user?.id) {
+      query += ' AND c.usuario_id = ?';
+      params.push(req.user.id);
+    }
 
     if (estado) {
       query += ' AND c.estado = ?';
@@ -1777,7 +1864,18 @@ export const obtenerCompras = async (req, res) => {
 
     query += ' ORDER BY c.created_at DESC';
 
-    const [compras] = await pool.execute(query, params);
+    let compras;
+    try {
+      const [rows] = await pool.execute(query, params);
+      compras = rows;
+    } catch (err) {
+      // Si la tabla no tiene usuario_id, el vendedor ve lista vacía hasta ejecutar la migración
+      if (err.code === 'ER_BAD_FIELD_ERROR' && rol === 'vendedor' && (err.message || '').toLowerCase().includes('usuario_id')) {
+        console.warn('Tabla compras sin columna usuario_id. Ejecuta backend/scripts/agregar_usuario_id_compras.sql para que "Mis ventas" filtre por vendedor.');
+        return res.json({ success: true, data: [] });
+      }
+      throw err;
+    }
 
     // Para cada compra, obtener cantidad de asientos y mesas
     const comprasConDetalles = await Promise.all(compras.map(async (compra) => {
@@ -1955,6 +2053,15 @@ export const confirmarPago = async (req, res) => {
 
     const compra = compras[0];
 
+    const rolUser = (req.user?.rol || '').toLowerCase();
+    // Vendedor: solo bloquear si la compra tiene otro dueño asignado (usuario_id no nulo y distinto del vendedor)
+    if (rolUser === 'vendedor' && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Solo puedes confirmar pagos de tus propias ventas'
+      });
+    }
+
     // Verificar que el estado sea PAGO_PENDIENTE
     if (compra.estado !== 'PAGO_PENDIENTE') {
       return res.status(400).json({
@@ -2052,15 +2159,34 @@ export const confirmarPago = async (req, res) => {
             );
           }
         } else {
-          // Evento general sin áreas: crear entradas simples
-          const cantidad = compra.cantidad || 1;
-          for (let i = 0; i < cantidad; i++) {
-            const codigoEscaneo = await generarCodigoEscaneo(connection);
-            await connection.execute(
-              `INSERT INTO compras_entradas_generales (compra_id, codigo_escaneo)
-               VALUES (?, ?)`,
-              [id, codigoEscaneo]
-            );
+          // Evento general: compras_detalle_general (múltiples tipos) o cantidad simple
+          const [detalleGeneral] = await connection.execute(
+            'SELECT tipo_precio_id, cantidad FROM compras_detalle_general WHERE compra_id = ?',
+            [id]
+          );
+          if (detalleGeneral.length > 0) {
+            for (const d of detalleGeneral) {
+              const cant = parseInt(d.cantidad, 10) || 1;
+              const tipoPrecioId = d.tipo_precio_id;
+              for (let i = 0; i < cant; i++) {
+                const codigoEscaneo = await generarCodigoEscaneo(connection);
+                await connection.execute(
+                  `INSERT INTO compras_entradas_generales (compra_id, tipo_precio_id, codigo_escaneo)
+                   VALUES (?, ?, ?)`,
+                  [id, tipoPrecioId, codigoEscaneo]
+                );
+              }
+            }
+          } else {
+            const cantidad = compra.cantidad || 1;
+            for (let i = 0; i < cantidad; i++) {
+              const codigoEscaneo = await generarCodigoEscaneo(connection);
+              await connection.execute(
+                `INSERT INTO compras_entradas_generales (compra_id, codigo_escaneo)
+                 VALUES (?, ?)`,
+                [id, codigoEscaneo]
+              );
+            }
           }
         }
       }
@@ -2130,13 +2256,17 @@ export const confirmarPago = async (req, res) => {
               eg.id,
               eg.compra_id,
               eg.area_id,
+              eg.tipo_precio_id,
               eg.codigo_escaneo,
               eg.escaneado,
               eg.fecha_escaneo,
               eg.usuario_escaneo_id,
-              ar.nombre as area_nombre
+              ar.nombre as area_nombre,
+              tp.nombre as tipo_precio_nombre,
+              tp.precio as tipo_precio_precio
              FROM compras_entradas_generales eg
              LEFT JOIN areas_layout ar ON eg.area_id = ar.id
+             LEFT JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
              WHERE eg.compra_id = ?
              ORDER BY eg.id ASC`,
             [id]
@@ -2212,6 +2342,11 @@ export const cancelarCompra = async (req, res) => {
     }
 
     const compra = compras[0];
+
+    const rolCancel = (req.user?.rol || '').toLowerCase();
+    if (rolCancel === 'vendedor' && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Solo puedes cancelar tus propias ventas' });
+    }
 
     // Solo se puede cancelar si está pendiente
     if (compra.estado !== 'PAGO_PENDIENTE') {
@@ -2432,6 +2567,11 @@ export const obtenerPDFBoleto = async (req, res) => {
 
     const compra = compras[0];
 
+    const rolPdf = (req.user?.rol || '').toLowerCase();
+    if (rolPdf === 'vendedor' && (compra.usuario_id == null || compra.usuario_id !== req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Solo puedes acceder a tus propias ventas' });
+    }
+
     // Verificar que el pago esté confirmado
     if (compra.estado !== 'PAGO_REALIZADO') {
       return res.status(400).json({
@@ -2473,10 +2613,13 @@ export const obtenerPDFBoleto = async (req, res) => {
     let entradasGenerales = [];
     if (asientos.length === 0 && mesas.length === 0) {
       const [entradas] = await pool.execute(
-        `SELECT eg.id, eg.compra_id, eg.area_id, eg.codigo_escaneo, eg.escaneado, eg.fecha_escaneo, eg.usuario_escaneo_id,
-                ar.nombre as area_nombre
+        `SELECT eg.id, eg.compra_id, eg.area_id, eg.tipo_precio_id, eg.codigo_escaneo, eg.escaneado, eg.fecha_escaneo, eg.usuario_escaneo_id,
+                ar.nombre as area_nombre,
+                tp.nombre as tipo_precio_nombre,
+                tp.precio as tipo_precio_precio
          FROM compras_entradas_generales eg
          LEFT JOIN areas_layout ar ON eg.area_id = ar.id
+         LEFT JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
          WHERE eg.compra_id = ?
          ORDER BY eg.id ASC`,
         [id]
@@ -2561,6 +2704,11 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
 
     const compra = compras[0];
 
+    const rolWa = (req.user?.rol || '').toLowerCase();
+    if (rolWa === 'vendedor' && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Solo puedes enviar boletos de tus propias ventas' });
+    }
+
     // Verificar que el pago esté confirmado
     if (compra.estado !== 'PAGO_REALIZADO') {
       return res.status(400).json({
@@ -2609,10 +2757,13 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
     let entradasGenerales = [];
     if (asientos.length === 0 && mesas.length === 0) {
       const [entradas] = await pool.execute(
-        `SELECT eg.id, eg.compra_id, eg.area_id, eg.codigo_escaneo, eg.escaneado, eg.fecha_escaneo, eg.usuario_escaneo_id,
-                ar.nombre as area_nombre
+        `SELECT eg.id, eg.compra_id, eg.area_id, eg.tipo_precio_id, eg.codigo_escaneo, eg.escaneado, eg.fecha_escaneo, eg.usuario_escaneo_id,
+                ar.nombre as area_nombre,
+                tp.nombre as tipo_precio_nombre,
+                tp.precio as tipo_precio_precio
          FROM compras_entradas_generales eg
          LEFT JOIN areas_layout ar ON eg.area_id = ar.id
+         LEFT JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
          WHERE eg.compra_id = ?
          ORDER BY eg.id ASC`,
         [id]
@@ -2838,6 +2989,11 @@ export const enviarBoletoPorEmail = async (req, res) => {
 
     const compra = compras[0];
 
+    const rolEmail = (req.user?.rol || '').toLowerCase();
+    if (rolEmail === 'vendedor' && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Solo puedes enviar boletos de tus propias ventas' });
+    }
+
     // Verificar que el pago esté confirmado
     if (compra.estado !== 'PAGO_REALIZADO') {
       return res.status(400).json({
@@ -2887,10 +3043,13 @@ export const enviarBoletoPorEmail = async (req, res) => {
     let entradasGenerales = [];
     if (asientos.length === 0 && mesas.length === 0) {
       const [entradas] = await pool.execute(
-        `SELECT eg.id, eg.compra_id, eg.area_id, eg.codigo_escaneo, eg.escaneado, eg.fecha_escaneo, eg.usuario_escaneo_id,
-                ar.nombre as area_nombre
+        `SELECT eg.id, eg.compra_id, eg.area_id, eg.tipo_precio_id, eg.codigo_escaneo, eg.escaneado, eg.fecha_escaneo, eg.usuario_escaneo_id,
+                ar.nombre as area_nombre,
+                tp.nombre as tipo_precio_nombre,
+                tp.precio as tipo_precio_precio
          FROM compras_entradas_generales eg
          LEFT JOIN areas_layout ar ON eg.area_id = ar.id
+         LEFT JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
          WHERE eg.compra_id = ?
          ORDER BY eg.id ASC`,
         [id]

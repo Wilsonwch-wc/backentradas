@@ -232,7 +232,39 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
         evento.areas = [];
       }
     } else {
-      evento.tipos_precio = [];
+      // Evento general: puede tener múltiples tipos de precio (VIP, General, Gradería) sin diseño de asientos
+      const [tiposPrecioGeneral] = await pool.execute(
+        `SELECT id, nombre, precio, descripcion, color, limite
+         FROM tipos_precio_evento
+         WHERE evento_id = ? AND activo = 1
+         ORDER BY precio DESC`,
+        [eventoId]
+      );
+      if (tiposPrecioGeneral.length > 0) {
+        for (const tp of tiposPrecioGeneral) {
+          tp.limite = tp.limite != null ? parseInt(tp.limite, 10) : null;
+          const [egCount] = await pool.execute(
+            `SELECT COUNT(*) AS total FROM compras_entradas_generales eg
+             INNER JOIN compras c ON eg.compra_id = c.id
+             WHERE eg.tipo_precio_id = ? AND c.evento_id = ? AND c.estado IN ('PAGO_REALIZADO','ENTRADA_USADA')`,
+            [tp.id, eventoId]
+          );
+          const [dgSum] = await pool.execute(
+            `SELECT COALESCE(SUM(cdg.cantidad), 0) AS total FROM compras_detalle_general cdg
+             INNER JOIN compras c ON cdg.compra_id = c.id
+             WHERE cdg.tipo_precio_id = ? AND c.evento_id = ? AND c.estado = 'PAGO_PENDIENTE'`,
+            [tp.id, eventoId]
+          );
+          const vendidos = parseInt(egCount[0]?.total || 0, 10) + parseInt(dgSum[0]?.total || 0, 10);
+          tp.vendidos = vendidos;
+          tp.disponibles = tp.limite != null ? Math.max(0, tp.limite - vendidos) : null;
+        }
+        evento.tipos_precio = tiposPrecioGeneral;
+        const precioMin = tiposPrecioGeneral.reduce((min, tp) => (tp.precio < min ? tp.precio : min), tiposPrecioGeneral[0].precio);
+        evento.precio = precioMin;
+      } else {
+        evento.tipos_precio = [];
+      }
       evento.mesas = [];
       evento.asientos = [];
       evento.areas = [];

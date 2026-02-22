@@ -124,6 +124,7 @@ export const obtenerReportePorEvento = async (req, res) => {
     let asientos = [];
     let mesas = [];
     let areasPersonas = [];
+    let detalleGeneralPorCompra = {};
 
     if (compraIds.length > 0) {
       [asientos] = await pool.query(
@@ -177,6 +178,47 @@ export const obtenerReportePorEvento = async (req, res) => {
           [compraIds]
         );
       } catch (_) {}
+
+      // Evento general: detalle por tipo de entrada (VIP, General, Gradería, etc.)
+      if (evento.tipo_evento === 'general') {
+        try {
+          const [filasDetalle] = await pool.query(
+            `SELECT cdg.compra_id, tp.nombre AS tipo_nombre, cdg.cantidad
+             FROM compras_detalle_general cdg
+             INNER JOIN tipos_precio_evento tp ON cdg.tipo_precio_id = tp.id
+             WHERE cdg.compra_id IN (?)
+             ORDER BY cdg.compra_id, tp.nombre`,
+            [compraIds]
+          );
+          for (const f of filasDetalle) {
+            if (!detalleGeneralPorCompra[f.compra_id]) detalleGeneralPorCompra[f.compra_id] = [];
+            detalleGeneralPorCompra[f.compra_id].push({
+              tipo_nombre: f.tipo_nombre,
+              cantidad: f.cantidad
+            });
+          }
+          // Compras sin detalle (ej. sin tipos): usar entradas generales confirmadas por tipo
+          const [entradasPorTipo] = await pool.query(
+            `SELECT eg.compra_id, tp.nombre AS tipo_nombre, COUNT(*) AS cantidad
+             FROM compras_entradas_generales eg
+             INNER JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
+             WHERE eg.compra_id IN (?)
+             GROUP BY eg.compra_id, tp.id, tp.nombre
+             ORDER BY eg.compra_id, tp.nombre`,
+            [compraIds]
+          );
+          for (const f of entradasPorTipo) {
+            if (!detalleGeneralPorCompra[f.compra_id]) detalleGeneralPorCompra[f.compra_id] = [];
+            const exist = detalleGeneralPorCompra[f.compra_id].find((x) => x.tipo_nombre === f.tipo_nombre);
+            if (!exist) {
+              detalleGeneralPorCompra[f.compra_id].push({
+                tipo_nombre: f.tipo_nombre,
+                cantidad: f.cantidad
+              });
+            }
+          }
+        } catch (_) {}
+      }
     }
 
     const asientosPorCompra = asientos.reduce((acc, asiento) => {
@@ -212,6 +254,12 @@ export const obtenerReportePorEvento = async (req, res) => {
           ? totalEntradasEspecial || compra.cantidad
           : compra.cantidad;
 
+      const detallePorTipo = detalleGeneralPorCompra[compra.id];
+      const detalleCompraGeneral =
+        detallePorTipo && detallePorTipo.length > 0
+          ? detallePorTipo.map((d) => `${d.cantidad} ${d.tipo_nombre}`).join(', ')
+          : `${totalEntradas} entrada(s) general`;
+
       return {
         ...compra,
         asientos: detalleAsientos,
@@ -221,7 +269,7 @@ export const obtenerReportePorEvento = async (req, res) => {
         detalle_compra:
           evento.tipo_evento === 'especial'
             ? buildDetalleCompraEspecial(detalleAsientos, detalleMesas, detalleAreasPersonas, totalEntradas)
-            : `${totalEntradas} entrada(s) general`
+            : detalleCompraGeneral
       };
     });
 
@@ -333,6 +381,49 @@ export const exportarReporte = async (req, res) => {
        ORDER BY c.fecha_compra DESC`,
       [evento_id]
     );
+
+    // Detalle por tipo (VIP, General, etc.) para evento general en la exportación
+    const compraIdsExport = compras.map((c) => c.id);
+    let detalleGeneralPorCompraExport = {};
+    if (evento.tipo_evento === 'general' && compraIdsExport.length > 0) {
+      try {
+        const [filasDetalleExp] = await pool.query(
+          `SELECT cdg.compra_id, tp.nombre AS tipo_nombre, cdg.cantidad
+           FROM compras_detalle_general cdg
+           INNER JOIN tipos_precio_evento tp ON cdg.tipo_precio_id = tp.id
+           WHERE cdg.compra_id IN (?)`,
+          [compraIdsExport]
+        );
+        for (const f of filasDetalleExp) {
+          if (!detalleGeneralPorCompraExport[f.compra_id]) detalleGeneralPorCompraExport[f.compra_id] = [];
+          detalleGeneralPorCompraExport[f.compra_id].push({ tipo_nombre: f.tipo_nombre, cantidad: f.cantidad });
+        }
+        const [entradasPorTipoExp] = await pool.query(
+          `SELECT eg.compra_id, tp.nombre AS tipo_nombre, COUNT(*) AS cantidad
+           FROM compras_entradas_generales eg
+           INNER JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
+           WHERE eg.compra_id IN (?)
+           GROUP BY eg.compra_id, tp.id, tp.nombre`,
+          [compraIdsExport]
+        );
+        for (const f of entradasPorTipoExp) {
+          if (!detalleGeneralPorCompraExport[f.compra_id]) detalleGeneralPorCompraExport[f.compra_id] = [];
+          const exist = detalleGeneralPorCompraExport[f.compra_id].find((x) => x.tipo_nombre === f.tipo_nombre);
+          if (!exist) detalleGeneralPorCompraExport[f.compra_id].push({ tipo_nombre: f.tipo_nombre, cantidad: f.cantidad });
+        }
+      } catch (_) {}
+    }
+    const comprasConDetalleExport = compras.map((c) => {
+      const detallePorTipo = detalleGeneralPorCompraExport[c.id];
+      const detalleCompraGeneral =
+        detallePorTipo && detallePorTipo.length > 0
+          ? detallePorTipo.map((d) => `${d.cantidad} ${d.tipo_nombre}`).join(', ')
+          : `${c.cantidad || 0} entrada(s) general`;
+      return {
+        ...c,
+        detalle_compra: evento.tipo_evento === 'general' ? detalleCompraGeneral : null
+      };
+    });
 
     // Calcular resumen por tipo de pago para la exportación
     const resumenTipoPago = compras.reduce(
@@ -475,7 +566,7 @@ export const exportarReporte = async (req, res) => {
 
     const datosReporte = {
       evento,
-      compras,
+      compras: comprasConDetalleExport,
       estadisticas,
       resumenTipoPago
     };

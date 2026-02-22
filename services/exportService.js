@@ -176,6 +176,7 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
         'Email',
         'Teléfono',
         'Cantidad',
+        'Detalle',
         'Total',
         'Tipo Venta',
         'Tipo Pago',
@@ -198,6 +199,7 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
       // Datos
       datos.compras.forEach((compra, index) => {
         const tipoVentaLabel = compra.tipo_venta === 'REGALO_ADMIN' ? 'Regalo Admin' : compra.tipo_venta === 'OFERTA_ADMIN' ? 'Oferta' : 'Normal';
+        const detalleLabel = compra.detalle_compra || (compra.cantidad ? `${compra.cantidad} entrada(s)` : '-');
         const row = comprasSheet.addRow([
           compra.id,
           compra.codigo_unico,
@@ -205,6 +207,7 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
           compra.cliente_email || '',
           compra.cliente_telefono || '',
           compra.cantidad,
+          detalleLabel,
           parseFloat(compra.total || 0).toFixed(2),
           tipoVentaLabel,
           compra.tipo_pago || '-',
@@ -527,16 +530,17 @@ export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
         // Anchos de columnas optimizados para que quepa todo en una hoja
         // Total debe ser <= 495 puntos
         const colWidths = {
-          id: 25,
-          codigo: 65,
-          cliente: 75,
-          email: 85,
-          telefono: 60,
-          cantidad: 30,
-          total: 55,
-          tipo: 45,
-          estado: 60,
-          fecha: 60
+          id: 22,
+          codigo: 58,
+          cliente: 65,
+          email: 75,
+          telefono: 52,
+          cantidad: 26,
+          detalle: 52,
+          total: 48,
+          tipo: 40,
+          estado: 52,
+          fecha: 52
         };
         
         // Verificar que la suma no exceda el ancho disponible
@@ -572,6 +576,8 @@ export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
         headerX += colWidths.telefono;
         doc.text('Cant.', headerX, tableTop + 5);
         headerX += colWidths.cantidad;
+        doc.text('Detalle', headerX, tableTop + 5);
+        headerX += colWidths.detalle;
         doc.text('Total', headerX, tableTop + 5);
         headerX += colWidths.total;
         doc.text('Tipo', headerX, tableTop + 5);
@@ -606,6 +612,8 @@ export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
           hX += colWidths.telefono;
           doc.text('Cant.', hX, y + 5);
           hX += colWidths.cantidad;
+          doc.text('Detalle', hX, y + 5);
+          hX += colWidths.detalle;
           doc.text('Total', hX, y + 5);
           hX += colWidths.total;
           doc.text('Tipo', hX, y + 5);
@@ -682,6 +690,14 @@ export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
              .fillColor('#2196F3')
              .text(compra.cantidad.toString(), cellX, cellY);
           cellX += colWidths.cantidad;
+
+          // Detalle (VIP, General, etc.)
+          const detalleCorto = (compra.detalle_compra || `${compra.cantidad} ent.`).substring(0, 14);
+          doc.fontSize(6)
+             .font('Helvetica')
+             .fillColor('#34495E')
+             .text(detalleCorto, cellX, cellY);
+          cellX += colWidths.detalle;
 
           // Total
           const total = parseFloat(compra.total || 0);

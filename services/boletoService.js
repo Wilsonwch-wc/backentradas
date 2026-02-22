@@ -108,6 +108,8 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     tipoBoleto = asiento.tipo_precio_nombre.toUpperCase();
   } else if (mesa) {
     tipoBoleto = 'MESA';
+  } else if (entradaGeneral && entradaGeneral.tipo_precio_nombre) {
+    tipoBoleto = entradaGeneral.tipo_precio_nombre.toUpperCase();
   } else if (entradaGeneral && entradaGeneral.area_nombre) {
     tipoBoleto = `ZONA ${entradaGeneral.area_nombre.toUpperCase()}`;
   }
@@ -133,6 +135,26 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
      });
 
   yPos += 12;
+
+  // Código de verificación (para escaneo por QR o ingreso manual del código)
+  if (codigoEscaneo) {
+    doc.fontSize(8)
+       .font('Helvetica')
+       .fillColor('#333333')
+       .text('Código de verificación:', margin, yPos, {
+         width: contentWidth,
+         align: 'center'
+       });
+    yPos += 10;
+    doc.fontSize(14)
+       .font('Helvetica-Bold')
+       .fillColor('#000000')
+       .text(codigoEscaneo, margin, yPos, {
+         width: contentWidth,
+         align: 'center'
+       });
+    yPos += 16;
+  }
 
   // Asiento (si aplica)
   if (asiento && asiento.numero_asiento) {
@@ -397,16 +419,19 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
     });
   }
 
-  // Entradas generales (incluye zonas generales/personas de pie)
+  // Entradas generales (incluye zonas generales/personas de pie) — precio real por tipo
   if (entradasGenerales && entradasGenerales.length > 0) {
-    const precioUnitario = parseFloat(compra.total || 0) / entradasGenerales.length;
+    const tienePrecioPorTipo = entradasGenerales.some(e => e.tipo_precio_precio != null && e.tipo_precio_precio !== '');
     entradasGenerales.forEach((entrada, idx) => {
+      const precioUnitario = tienePrecioPorTipo
+        ? parseFloat(entrada.tipo_precio_precio || 0)
+        : parseFloat(compra.total || 0) / entradasGenerales.length;
       const subtotal = precioUnitario;
       totalItems += subtotal;
 
       const itemText = `${evento.titulo || 'Evento'}`;
-      const zonaLabel = entrada.area_nombre ? `Zona ${entrada.area_nombre}` : 'General';
-      const detalleText = `${zonaLabel} ${idx + 1} X ${precioUnitario.toFixed(2)}`;
+      const tipoLabel = entrada.tipo_precio_nombre || (entrada.area_nombre ? `Zona ${entrada.area_nombre}` : 'General');
+      const detalleText = `${tipoLabel} ${idx + 1} X ${precioUnitario.toFixed(2)}`;
       
       doc.fontSize(7)
          .font('Helvetica')
