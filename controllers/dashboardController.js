@@ -22,6 +22,17 @@ const safeSum = async (query, params = []) => {
 
 export const obtenerResumenDashboard = async (_req, res) => {
   try {
+    // Eventos actualmente activos (solo estos entran en compras/pagos/ingresos del panel)
+    const [eventosActivosRows] = await pool.execute(
+      "SELECT id, titulo FROM eventos WHERE estado = 'activo' ORDER BY hora_inicio ASC"
+    );
+    const idsActivos = eventosActivosRows.map((r) => r.id);
+    const nombresEventoActivo = eventosActivosRows.map((r) => r.titulo).filter(Boolean);
+    const filtroEventoActivo =
+      idsActivos.length > 0
+        ? ` AND evento_id IN (${idsActivos.join(',')})`
+        : ' AND 1=0';
+
     const [
       totalClientes,
       totalEventos,
@@ -36,14 +47,14 @@ export const obtenerResumenDashboard = async (_req, res) => {
     ] = await Promise.all([
       safeCount('SELECT COUNT(*) AS total FROM clientes'),
       safeCount('SELECT COUNT(*) AS total FROM eventos'),
-      safeCount('SELECT COUNT(*) AS total FROM eventos WHERE hora_inicio >= NOW()'),
-      safeCount('SELECT COUNT(*) AS total FROM compras'),
-      safeCount("SELECT COUNT(*) AS total FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA')"),
-      safeCount("SELECT COUNT(*) AS total FROM compras WHERE estado = 'PAGO_PENDIENTE'"),
-      safeSum("SELECT COALESCE(SUM(total),0) AS suma FROM compras WHERE estado = 'PAGO_PENDIENTE'"),
-      safeSum("SELECT COALESCE(SUM(total),0) AS suma FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA')"),
-      safeSum("SELECT COALESCE(SUM(cantidad),0) AS suma FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA')"),
-      safeSum("SELECT COALESCE(SUM(cantidad),0) AS suma FROM compras WHERE estado = 'PAGO_PENDIENTE'")
+      safeCount("SELECT COUNT(*) AS total FROM eventos WHERE estado = 'activo'"),
+      safeCount(`SELECT COUNT(*) AS total FROM compras WHERE 1=1 ${filtroEventoActivo}`),
+      safeCount(`SELECT COUNT(*) AS total FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA') ${filtroEventoActivo}`),
+      safeCount(`SELECT COUNT(*) AS total FROM compras WHERE estado = 'PAGO_PENDIENTE' ${filtroEventoActivo}`),
+      safeSum(`SELECT COALESCE(SUM(total),0) AS suma FROM compras WHERE estado = 'PAGO_PENDIENTE' ${filtroEventoActivo}`),
+      safeSum(`SELECT COALESCE(SUM(total),0) AS suma FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA') ${filtroEventoActivo}`),
+      safeSum(`SELECT COALESCE(SUM(cantidad),0) AS suma FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA') ${filtroEventoActivo}`),
+      safeSum(`SELECT COALESCE(SUM(cantidad),0) AS suma FROM compras WHERE estado = 'PAGO_PENDIENTE' ${filtroEventoActivo}`)
     ]);
 
     res.json({
@@ -59,7 +70,8 @@ export const obtenerResumenDashboard = async (_req, res) => {
         ingresos_confirmados: ingresosConfirmados,
         entradas_confirmadas: entradasConfirmadas,
         entradas_pendientes: entradasPendientes,
-        ultima_actualizacion: new Date().toISOString()
+        ultima_actualizacion: new Date().toISOString(),
+        evento_activo_nombres: nombresEventoActivo
       }
     });
   } catch (error) {
