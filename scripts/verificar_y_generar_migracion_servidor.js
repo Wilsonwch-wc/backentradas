@@ -68,6 +68,20 @@ const ALTERS_COLUMNAS = [
   { table: 'eventos', column: 'ubicacion', sql: 'ALTER TABLE eventos ADD COLUMN ubicacion VARCHAR(255) DEFAULT NULL;' },
   { table: 'eventos', column: 'ciudad', sql: 'ALTER TABLE eventos ADD COLUMN ciudad VARCHAR(100) DEFAULT NULL;' },
   { table: 'eventos', column: 'hora_fin', sql: 'ALTER TABLE eventos ADD COLUMN hora_fin DATETIME DEFAULT NULL;' },
+  { table: 'eventos', column: 'fecha', sql: 'ALTER TABLE eventos ADD COLUMN fecha DATE DEFAULT NULL;' },
+  { table: 'eventos', column: 'lugar', sql: 'ALTER TABLE eventos ADD COLUMN lugar VARCHAR(255) DEFAULT NULL;' },
+  { table: 'eventos', column: 'slug', sql: 'ALTER TABLE eventos ADD COLUMN slug VARCHAR(255) DEFAULT NULL;' },
+  { table: 'areas_layout', column: 'tipo_area', sql: "ALTER TABLE areas_layout ADD COLUMN tipo_area ENUM('SILLAS','MESAS','PERSONAS') NOT NULL DEFAULT 'SILLAS';" },
+  { table: 'areas_layout', column: 'capacidad_personas', sql: 'ALTER TABLE areas_layout ADD COLUMN capacidad_personas INT DEFAULT NULL;' },
+  { table: 'areas_layout', column: 'orden', sql: 'ALTER TABLE areas_layout ADD COLUMN orden INT DEFAULT NULL;' },
+  { table: 'compras_entradas_generales', column: 'area_id', sql: 'ALTER TABLE compras_entradas_generales ADD COLUMN area_id INT DEFAULT NULL;' },
+  { table: 'compras_mesas', column: 'precio', sql: 'ALTER TABLE compras_mesas ADD COLUMN precio DECIMAL(10,2) DEFAULT NULL;' },
+  { table: 'contacto_info', column: 'nombre', sql: 'ALTER TABLE contacto_info ADD COLUMN nombre VARCHAR(100) DEFAULT NULL;' },
+  { table: 'contacto_info', column: 'mensaje', sql: 'ALTER TABLE contacto_info ADD COLUMN mensaje TEXT DEFAULT NULL;' },
+  { table: 'contacto_info', column: 'created_at', sql: 'ALTER TABLE contacto_info ADD COLUMN created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP;' },
+  { table: 'mesas', column: 'capacidad', sql: 'ALTER TABLE mesas ADD COLUMN capacidad INT DEFAULT NULL;' },
+  { table: 'usuarios', column: 'nombre', sql: 'ALTER TABLE usuarios ADD COLUMN nombre VARCHAR(100) DEFAULT NULL;' },
+  { table: 'usuarios', column: 'rol', sql: "ALTER TABLE usuarios ADD COLUMN rol VARCHAR(50) DEFAULT 'admin';" },
 ];
 
 const CREATE_COMPRAS_DETALLE_GENERAL = `CREATE TABLE IF NOT EXISTS compras_detalle_general (
