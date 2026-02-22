@@ -20,23 +20,45 @@ const safeSum = async (query, params = []) => {
   }
 };
 
-export const obtenerResumenDashboard = async (_req, res) => {
+export const obtenerResumenDashboard = async (req, res) => {
   try {
-    // Eventos actualmente activos (solo estos entran en compras/pagos/ingresos del panel)
-    const [eventosActivosRows] = await pool.execute(
-      "SELECT id, titulo FROM eventos WHERE estado = 'activo' ORDER BY hora_inicio ASC"
-    );
-    const idsActivos = eventosActivosRows.map((r) => r.id);
-    const nombresEventoActivo = eventosActivosRows.map((r) => r.titulo).filter(Boolean);
+    const eventoIdQuery = req.query?.evento_id;
+    const eventoIdNum = eventoIdQuery ? parseInt(eventoIdQuery, 10) : NaN;
+    const filtrarPorEventoId = Number.isInteger(eventoIdNum) && eventoIdNum > 0;
+
+    let idsFiltro = [];
+    let nombresEventoActivo = [];
+    let eventosHabilitados = 0;
+
+    if (filtrarPorEventoId) {
+      // Usuario eligió un evento concreto
+      idsFiltro = [eventoIdNum];
+      const [ev] = await pool.execute('SELECT id, titulo FROM eventos WHERE id = ?', [eventoIdNum]);
+      if (ev.length) {
+        nombresEventoActivo = [ev[0].titulo].filter(Boolean);
+      }
+      eventosHabilitados = ev?.length ? 1 : 0;
+    } else {
+      // Por defecto: solo el próximo evento (activo y que aún no ha pasado)
+      const [proximos] = await pool.execute(
+        "SELECT id, titulo FROM eventos WHERE estado = 'activo' AND hora_inicio >= NOW() ORDER BY hora_inicio ASC LIMIT 1"
+      );
+      idsFiltro = proximos.map((r) => r.id);
+      nombresEventoActivo = proximos.map((r) => r.titulo).filter(Boolean);
+      const [countHabilitados] = await pool.execute(
+        "SELECT COUNT(*) AS total FROM eventos WHERE estado = 'activo' AND hora_inicio >= NOW()"
+      );
+      eventosHabilitados = countHabilitados?.[0]?.total ?? 0;
+    }
+
     const filtroEventoActivo =
-      idsActivos.length > 0
-        ? ` AND evento_id IN (${idsActivos.join(',')})`
+      idsFiltro.length > 0
+        ? ` AND evento_id IN (${idsFiltro.join(',')})`
         : ' AND 1=0';
 
     const [
       totalClientes,
       totalEventos,
-      eventosHabilitados,
       totalCompras,
       pagosConfirmados,
       totalPendientes,
@@ -47,7 +69,6 @@ export const obtenerResumenDashboard = async (_req, res) => {
     ] = await Promise.all([
       safeCount('SELECT COUNT(*) AS total FROM clientes'),
       safeCount('SELECT COUNT(*) AS total FROM eventos'),
-      safeCount("SELECT COUNT(*) AS total FROM eventos WHERE estado = 'activo'"),
       safeCount(`SELECT COUNT(*) AS total FROM compras WHERE 1=1 ${filtroEventoActivo}`),
       safeCount(`SELECT COUNT(*) AS total FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA') ${filtroEventoActivo}`),
       safeCount(`SELECT COUNT(*) AS total FROM compras WHERE estado = 'PAGO_PENDIENTE' ${filtroEventoActivo}`),
@@ -56,6 +77,17 @@ export const obtenerResumenDashboard = async (_req, res) => {
       safeSum(`SELECT COALESCE(SUM(cantidad),0) AS suma FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA') ${filtroEventoActivo}`),
       safeSum(`SELECT COALESCE(SUM(cantidad),0) AS suma FROM compras WHERE estado = 'PAGO_PENDIENTE' ${filtroEventoActivo}`)
     ]);
+
+    // Lista de todos los eventos para el selector (id, titulo, hora_inicio, estado)
+    const [listaEventosRows] = await pool.execute(
+      'SELECT id, titulo, hora_inicio, estado FROM eventos ORDER BY hora_inicio DESC'
+    );
+    const lista_eventos = listaEventosRows.map((r) => ({
+      id: r.id,
+      titulo: r.titulo || `Evento #${r.id}`,
+      hora_inicio: r.hora_inicio,
+      estado: r.estado || null
+    }));
 
     res.json({
       success: true,
@@ -71,7 +103,8 @@ export const obtenerResumenDashboard = async (_req, res) => {
         entradas_confirmadas: entradasConfirmadas,
         entradas_pendientes: entradasPendientes,
         ultima_actualizacion: new Date().toISOString(),
-        evento_activo_nombres: nombresEventoActivo
+        evento_activo_nombres: nombresEventoActivo,
+        lista_eventos
       }
     });
   } catch (error) {
