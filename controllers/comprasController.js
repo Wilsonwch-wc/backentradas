@@ -1836,8 +1836,19 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
 // Obtener todas las compras (admin: todas; vendedor: solo las suyas por usuario_id)
 export const obtenerCompras = async (req, res) => {
   try {
-    const { estado, evento_id } = req.query;
+    let { estado, evento_id } = req.query;
     const rol = (req.user?.rol || '').toLowerCase();
+
+    // "activo" o "proximo" = solo el próximo evento (activo y hora_inicio >= NOW())
+    if (evento_id === 'activo' || evento_id === 'proximo') {
+      const [proximos] = await pool.execute(
+        "SELECT id FROM eventos WHERE estado = 'activo' AND hora_inicio >= NOW() ORDER BY hora_inicio ASC LIMIT 1"
+      );
+      evento_id = proximos.length ? String(proximos[0].id) : null;
+      if (!evento_id) {
+        return res.json({ success: true, data: [] });
+      }
+    }
 
     let query = `
       SELECT c.*, e.titulo as evento_titulo, e.hora_inicio as evento_fecha
@@ -2902,37 +2913,54 @@ export const eliminarCompra = async (req, res) => {
     await connection.beginTransaction();
 
     try {
-      // Eliminar registros de compras_asientos primero (CASCADE debería hacerlo, pero lo hacemos explícito)
+      // Eliminar en orden para evitar restricciones de FK (compatible con servidores con o sin CASCADE)
       await connection.execute(
         `DELETE FROM compras_asientos WHERE compra_id = ?`,
         [id]
       );
-
-      // Eliminar registros de compras_mesas (CASCADE debería hacerlo, pero lo hacemos explícito)
       await connection.execute(
         `DELETE FROM compras_mesas WHERE compra_id = ?`,
         [id]
       );
-
-      // Eliminar registros de compras_areas_personas
       await connection.execute(
         `DELETE FROM compras_areas_personas WHERE compra_id = ?`,
         [id]
       );
-
-      // Eliminar uso del cupón y descontar del contador del cupón (si esta compra usó cupón)
-      if (compra.cupon_id) {
+      // Tablas que pueden existir según versión del esquema
+      try {
         await connection.execute(
-          `DELETE FROM cupones_usados WHERE compra_id = ?`,
+          `DELETE FROM compras_entradas_generales WHERE compra_id = ?`,
           [id]
         );
+      } catch (e) {
+        if (e.code !== 'ER_NO_SUCH_TABLE') console.warn('compras_entradas_generales:', e.message);
+      }
+      try {
         await connection.execute(
-          `UPDATE cupones SET usos_actuales = GREATEST(0, usos_actuales - 1) WHERE id = ?`,
-          [compra.cupon_id]
+          `DELETE FROM escaneos_entradas WHERE compra_id = ?`,
+          [id]
         );
+      } catch (e) {
+        if (e.code !== 'ER_NO_SUCH_TABLE') console.warn('escaneos_entradas:', e.message);
+      }
+      // Cupones: tabla puede no existir en algunos servidores
+      if (compra.cupon_id) {
+        try {
+          await connection.execute(
+            `DELETE FROM cupones_usados WHERE compra_id = ?`,
+            [id]
+          );
+          await connection.execute(
+            `UPDATE cupones SET usos_actuales = GREATEST(0, usos_actuales - 1) WHERE id = ?`,
+            [compra.cupon_id]
+          );
+        } catch (e) {
+          if (e.code !== 'ER_NO_SUCH_TABLE' && e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+          console.warn('Cupones al eliminar compra:', e.message);
+        }
       }
 
-      // Eliminar la compra (esto debería eliminar en cascada las relaciones si quedan)
+      // Eliminar la compra
       await connection.execute(
         `DELETE FROM compras WHERE id = ?`,
         [id]
@@ -2954,9 +2982,12 @@ export const eliminarCompra = async (req, res) => {
 
   } catch (error) {
     console.error('Error al eliminar compra:', error);
+    const msg = error.code === 'ER_ROW_IS_REFERENCED_2' || error.code === 'ER_NO_REFERENCED_ROW_2'
+      ? 'No se puede eliminar: hay datos vinculados. Contacte al administrador.'
+      : (error.message || 'Error al eliminar la compra');
     res.status(500).json({
       success: false,
-      message: 'Error al eliminar la compra',
+      message: msg,
       error: error.message
     });
   }
