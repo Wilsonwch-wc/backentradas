@@ -29,20 +29,20 @@ console.log('📦 Router de compras inicializado');
 // IMPORTANTE: Rutas más específicas primero para evitar conflictos
 
 // Buscar entrada por código de escaneo (sin tickear, solo mostrar info)
-router.post('/buscar-entrada', verifyToken, checkRole(['admin', 'seguridad']), (req, res, next) => {
+router.post('/buscar-entrada', verifyToken, checkRole(['admin', 'seguridad', 'vendedor']), (req, res, next) => {
   console.log('🔍 [COMPRAS] POST /buscar-entrada recibida');
   console.log('Body:', JSON.stringify(req.body, null, 2));
   next();
 }, buscarEntradaPorCodigo);
 
 // Tickear entrada (marcar como escaneada)
-router.post('/tickear-entrada', verifyToken, checkRole(['admin', 'seguridad']), tickearEntrada);
+router.post('/tickear-entrada', verifyToken, checkRole(['admin', 'seguridad', 'vendedor']), tickearEntrada);
 
 // Desmarcar escaneo de entrada
-router.post('/desmarcar-escaneo', verifyToken, checkRole(['admin', 'seguridad']), desmarcarEscaneo);
+router.post('/desmarcar-escaneo', verifyToken, checkRole(['admin', 'seguridad', 'vendedor']), desmarcarEscaneo);
 
 // Obtener todas las entradas escaneadas
-router.get('/entradas-escaneadas', verifyToken, checkRole(['admin', 'seguridad']), obtenerEntradasEscaneadas);
+router.get('/entradas-escaneadas', verifyToken, checkRole(['admin', 'seguridad', 'vendedor']), obtenerEntradasEscaneadas);
 
 // Crear compra (público; si hay token de admin/vendedor se guarda usuario_id)
 router.post('/', optionalAuth, crearCompra);
