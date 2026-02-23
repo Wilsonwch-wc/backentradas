@@ -1566,7 +1566,9 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
                 vendidas: totalConfirmadasGenerales,
                 disponibles: totalDisponiblesGenerales,
                 escaneadas: totalEscaneadasGenerales,
-                total_faltantes: totalConfirmadasGenerales - totalEscaneadasGenerales
+                total_faltantes: totalConfirmadasGenerales - totalEscaneadasGenerales,
+                total_confirmadas: totalConfirmadasGenerales,
+                total_escaneadas: totalEscaneadasGenerales
               },
               asientos: {
                 limite_total: null,
