@@ -1,13 +1,13 @@
 import express from 'express';
-import { verifyToken, requireAdmin } from '../middleware/auth.js';
-import { obtenerResumenDashboard } from '../controllers/dashboardController.js';
+import { verifyToken, requireAdmin, checkRole } from '../middleware/auth.js';
+import { obtenerResumenDashboard, obtenerPanelEnVivo } from '../controllers/dashboardController.js';
 
 const router = express.Router();
 
 router.use(verifyToken);
-router.use(requireAdmin);
 
-router.get('/resumen', obtenerResumenDashboard);
+router.get('/resumen', requireAdmin, obtenerResumenDashboard);
+router.get('/panel-vivo', checkRole(['admin', 'seguridad']), obtenerPanelEnVivo);
 
 export default router;
 

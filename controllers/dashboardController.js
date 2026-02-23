@@ -117,4 +117,100 @@ export const obtenerResumenDashboard = async (req, res) => {
   }
 };
 
+/**
+ * Panel en vivo: ingresados, por escanear, rechazados por evento.
+ * GET /dashboard/panel-vivo?evento_id=123
+ */
+export const obtenerPanelEnVivo = async (req, res) => {
+  try {
+    const eventoId = req.query?.evento_id ? parseInt(req.query.evento_id, 10) : null;
+    if (!eventoId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere evento_id'
+      });
+    }
+
+    const [eventos] = await pool.execute(
+      'SELECT id, titulo, tipo_evento FROM eventos WHERE id = ?',
+      [eventoId]
+    );
+    if (eventos.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Evento no encontrado'
+      });
+    }
+    const evento = eventos[0];
+    const tipoEvento = (evento.tipo_evento || '').toLowerCase();
+
+    let total_confirmadas = 0;
+    let total_escaneadas = 0;
+
+    if (tipoEvento === 'general') {
+      const [rows] = await pool.execute(
+        `SELECT 
+           COUNT(*) AS total_confirmadas,
+           SUM(CASE WHEN eg.escaneado = TRUE THEN 1 ELSE 0 END) AS total_escaneadas
+         FROM compras_entradas_generales eg
+         INNER JOIN compras c ON eg.compra_id = c.id
+         WHERE c.evento_id = ? AND c.estado = 'PAGO_REALIZADO'`,
+        [eventoId]
+      );
+      total_confirmadas = parseInt(rows[0]?.total_confirmadas || 0, 10);
+      total_escaneadas = parseInt(rows[0]?.total_escaneadas || 0, 10);
+    } else {
+      // Especial: asientos + sillas de mesas
+      const [asientos] = await pool.execute(
+        `SELECT 
+           COUNT(*) AS total_confirmadas,
+           SUM(CASE WHEN ca.escaneado = TRUE THEN 1 ELSE 0 END) AS total_escaneadas
+         FROM compras_asientos ca
+         INNER JOIN compras c ON ca.compra_id = c.id
+         WHERE c.evento_id = ? AND ca.estado = 'CONFIRMADO'`,
+        [eventoId]
+      );
+      const [mesas] = await pool.execute(
+        `SELECT 
+           COALESCE(SUM(cm.cantidad_sillas), 0) AS total_confirmadas,
+           COALESCE(SUM(CASE WHEN cm.escaneado = TRUE THEN cm.cantidad_sillas ELSE 0 END), 0) AS total_escaneadas
+         FROM compras_mesas cm
+         INNER JOIN compras c ON cm.compra_id = c.id
+         WHERE c.evento_id = ? AND cm.estado = 'CONFIRMADO'`,
+        [eventoId]
+      );
+      total_confirmadas =
+        parseInt(asientos[0]?.total_confirmadas || 0, 10) +
+        parseInt(mesas[0]?.total_confirmadas || 0, 10);
+      total_escaneadas =
+        parseInt(asientos[0]?.total_escaneadas || 0, 10) +
+        parseInt(mesas[0]?.total_escaneadas || 0, 10);
+    }
+
+    const por_escanear = Math.max(0, total_confirmadas - total_escaneadas);
+    const rechazados = 0; // Por ahora no se registran intentos rechazados
+
+    res.json({
+      success: true,
+      data: {
+        evento_id: eventoId,
+        evento_titulo: evento.titulo,
+        tipo_evento: tipoEvento,
+        ingresados: total_escaneadas,
+        por_escanear,
+        total_confirmadas,
+        rechazados,
+        ultima_actualizacion: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error en panel en vivo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener el panel en vivo',
+      error: error.message
+    });
+  }
+};
+
 
