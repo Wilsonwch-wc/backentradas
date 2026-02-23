@@ -37,7 +37,9 @@ export const checkRole = (roles) => {
     }
 
     // Verificar si el rol del usuario está en la lista de roles permitidos
-    if (!roles.includes(req.user.rol)) {
+    const rol = (req.user.rol || '').toLowerCase();
+    const rolesPermitidos = (roles || []).map((r) => String(r || '').toLowerCase());
+    if (!rolesPermitidos.includes(rol)) {
       return res.status(403).json({ 
         success: false,
         message: 'No tienes permisos para acceder a esta ruta' 
@@ -90,7 +92,7 @@ export const requireAdminOrVendedor = (req, res, next) => {
     return res.status(401).json({ success: false, message: 'Usuario no autenticado' });
   }
   const rol = (req.user.rol || '').toLowerCase();
-  if (rol !== 'admin' && rol !== 'vendedor') {
+  if (rol !== 'admin' && rol !== 'vendedor' && rol !== 'vendedor_externo') {
     return res.status(403).json({ success: false, message: 'Se requieren permisos de administrador o vendedor' });
   }
   next();

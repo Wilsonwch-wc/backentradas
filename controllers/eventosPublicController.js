@@ -68,6 +68,115 @@ export const obtenerEventosPublicos = async (req, res) => {
   }
 };
 
+// Obtener plano (asientos y mesas) filtrado por zona - para carga progresiva
+export const obtenerPlanoPorZona = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const areaId = req.query?.area_id ? parseInt(req.query.area_id, 10) : null;
+
+    if (!areaId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere area_id para cargar el plano por zona'
+      });
+    }
+
+    const eventoId = /^\d+$/.test(id) ? parseInt(id, 10) : null;
+    if (!eventoId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere el ID numérico del evento'
+      });
+    }
+
+    const [eventoCheck] = await pool.execute(
+      'SELECT id, tipo_evento FROM eventos WHERE id = ?',
+      [eventoId]
+    );
+    if (eventoCheck.length === 0) {
+      return res.status(404).json({ success: false, message: 'Evento no encontrado' });
+    }
+    if (eventoCheck[0].tipo_evento !== 'especial') {
+      return res.json({ success: true, data: { asientos: [], mesas: [] } });
+    }
+
+    const [areaCheck] = await pool.execute(
+      'SELECT id, posicion_x, posicion_y, ancho, alto FROM areas_layout WHERE id = ? AND evento_id = ?',
+      [areaId, eventoId]
+    );
+    if (areaCheck.length === 0) {
+      return res.json({ success: true, data: { asientos: [], mesas: [] } });
+    }
+
+    const area = areaCheck[0];
+    const ax = Number(area.posicion_x ?? 0);
+    const ay = Number(area.posicion_y ?? 0);
+    const aw = Number(area.ancho ?? 0);
+    const ah = Number(area.alto ?? 0);
+
+    const [mesas] = await pool.execute(
+      `SELECT id, numero_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto
+       FROM mesas
+       WHERE evento_id = ? AND activo = 1 AND (
+         area_id = ?
+         OR (
+           area_id IS NULL
+           AND (posicion_x + (COALESCE(ancho, 30) / 2)) BETWEEN ? AND (? + ?)
+           AND (posicion_y + (COALESCE(alto, 30) / 2)) BETWEEN ? AND (? + ?)
+         )
+       )
+       ORDER BY numero_mesa ASC`,
+      [eventoId, areaId, ax, ax, aw, ay, ay, ah]
+    );
+
+    const idsMesas = mesas.map(m => m.id);
+    let asientos = [];
+
+    if (idsMesas.length > 0) {
+      const [asientosMesas] = await pool.execute(
+        `SELECT a.id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, a.estado,
+                a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre
+         FROM asientos a
+         LEFT JOIN areas_layout ar ON a.area_id = ar.id
+         WHERE a.evento_id = ? AND a.mesa_id IN (${idsMesas.map(() => '?').join(',')})
+         ORDER BY a.mesa_id ASC, a.numero_asiento ASC`,
+        [eventoId, ...idsMesas]
+      );
+      asientos = asientosMesas;
+    }
+
+    const [asientosSueltos] = await pool.execute(
+      `SELECT a.id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, a.estado,
+              a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre
+       FROM asientos a
+       LEFT JOIN areas_layout ar ON a.area_id = ar.id
+       WHERE a.evento_id = ? AND a.mesa_id IS NULL AND (
+         a.area_id = ?
+         OR (
+           a.area_id IS NULL
+           AND a.posicion_x BETWEEN ? AND (? + ?)
+           AND a.posicion_y BETWEEN ? AND (? + ?)
+         )
+       )
+       ORDER BY a.numero_asiento ASC`,
+      [eventoId, areaId, ax, ax, aw, ay, ay, ah]
+    );
+    asientos = [...asientos, ...asientosSueltos];
+
+    res.json({
+      success: true,
+      data: { asientos, mesas }
+    });
+  } catch (error) {
+    console.error('Error al obtener plano por zona:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener el plano',
+      error: error.message
+    });
+  }
+};
+
 // Obtener un evento por slug (generado del título) o ID (público)
 export const obtenerEventoPublicoPorId = async (req, res) => {
   try {

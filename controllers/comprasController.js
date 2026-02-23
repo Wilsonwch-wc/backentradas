@@ -44,6 +44,14 @@ export const crearCompra = async (req, res) => {
     }
 
     const tipoVentaValido = ['NORMAL', 'REGALO_ADMIN', 'OFERTA_ADMIN'].includes(tipo_venta) ? tipo_venta : 'NORMAL';
+    const rolUser = (req.user?.rol || '').toLowerCase();
+    const puedeOpcionesVentaAdmin = rolUser === 'admin' || rolUser === 'vendedor';
+    if ((tipoVentaValido === 'REGALO_ADMIN' || tipoVentaValido === 'OFERTA_ADMIN') && !puedeOpcionesVentaAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos para aplicar "Entrada gratis" o "Precio especial"'
+      });
+    }
     let totalFinal = parseFloat(total) || 0;
     let precioOriginalFinal = precio_original != null ? parseFloat(precio_original) : null;
     let cuponId = null;
@@ -219,7 +227,7 @@ export const crearCompra = async (req, res) => {
       // Si hay usuario logueado admin o vendedor, registrar quién realizó la venta
       let usuarioId = null;
       const rol = (req.user?.rol || '').toLowerCase();
-      if (req.user && (rol === 'admin' || rol === 'vendedor')) {
+      if (req.user && (rol === 'admin' || rol === 'vendedor' || rol === 'vendedor_externo')) {
         usuarioId = req.user.id;
       }
 
@@ -1860,7 +1868,7 @@ export const obtenerCompras = async (req, res) => {
     `;
     const params = [];
 
-    if (rol === 'vendedor' && req.user?.id) {
+    if ((rol === 'vendedor' || rol === 'vendedor_externo') && req.user?.id) {
       query += ' AND c.usuario_id = ?';
       params.push(req.user.id);
     }
@@ -1883,7 +1891,7 @@ export const obtenerCompras = async (req, res) => {
       compras = rows;
     } catch (err) {
       // Si la tabla no tiene usuario_id, el vendedor ve lista vacía hasta ejecutar la migración
-      if (err.code === 'ER_BAD_FIELD_ERROR' && rol === 'vendedor' && (err.message || '').toLowerCase().includes('usuario_id')) {
+      if (err.code === 'ER_BAD_FIELD_ERROR' && (rol === 'vendedor' || rol === 'vendedor_externo') && (err.message || '').toLowerCase().includes('usuario_id')) {
         console.warn('Tabla compras sin columna usuario_id. Ejecuta backend/scripts/agregar_usuario_id_compras.sql para que "Mis ventas" filtre por vendedor.');
         return res.json({ success: true, data: [] });
       }
@@ -1918,6 +1926,82 @@ export const obtenerCompras = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al obtener las compras',
+      error: error.message
+    });
+  }
+};
+
+// Resumen de "mis ventas" (vendedor / vendedor_externo)
+export const obtenerResumenMisVentas = async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, message: 'Usuario no autenticado' });
+    }
+
+    const usuarioId = Number(req.user.id);
+    if (!Number.isInteger(usuarioId) || usuarioId <= 0) {
+      return res.status(400).json({ success: false, message: 'Usuario inválido' });
+    }
+
+    const [resumenRows] = await pool.execute(
+      `SELECT
+         COALESCE(SUM(CASE WHEN estado IN ('PAGO_REALIZADO','ENTRADA_USADA') THEN 1 ELSE 0 END), 0) AS ventas_confirmadas,
+         COALESCE(SUM(CASE WHEN estado IN ('PAGO_REALIZADO','ENTRADA_USADA') THEN total ELSE 0 END), 0) AS ingresos_confirmados,
+         COALESCE(SUM(CASE WHEN estado IN ('PAGO_REALIZADO','ENTRADA_USADA') THEN cantidad ELSE 0 END), 0) AS entradas_confirmadas,
+         COALESCE(SUM(CASE WHEN estado = 'PAGO_PENDIENTE' THEN 1 ELSE 0 END), 0) AS ventas_pendientes,
+         COALESCE(SUM(CASE WHEN estado = 'PAGO_PENDIENTE' THEN total ELSE 0 END), 0) AS monto_pendiente,
+         COALESCE(SUM(CASE WHEN estado = 'PAGO_PENDIENTE' THEN cantidad ELSE 0 END), 0) AS entradas_pendientes,
+         COALESCE(SUM(CASE WHEN estado = 'CANCELADO' THEN 1 ELSE 0 END), 0) AS ventas_canceladas,
+         COALESCE(COUNT(*), 0) AS ventas_totales
+       FROM compras
+       WHERE usuario_id = ?`,
+      [usuarioId]
+    );
+
+    const resumen = resumenRows?.[0] || {};
+
+    const [porEventoRows] = await pool.execute(
+      `SELECT
+         c.evento_id,
+         COALESCE(e.titulo, CONCAT('Evento #', c.evento_id)) AS evento_titulo,
+         MIN(e.hora_inicio) AS evento_fecha,
+         COALESCE(SUM(CASE WHEN c.estado IN ('PAGO_REALIZADO','ENTRADA_USADA') THEN 1 ELSE 0 END), 0) AS ventas_confirmadas,
+         COALESCE(SUM(CASE WHEN c.estado IN ('PAGO_REALIZADO','ENTRADA_USADA') THEN c.total ELSE 0 END), 0) AS ingresos_confirmados,
+         COALESCE(SUM(CASE WHEN c.estado IN ('PAGO_REALIZADO','ENTRADA_USADA') THEN c.cantidad ELSE 0 END), 0) AS entradas_confirmadas,
+         COALESCE(SUM(CASE WHEN c.estado = 'PAGO_PENDIENTE' THEN 1 ELSE 0 END), 0) AS ventas_pendientes,
+         COALESCE(SUM(CASE WHEN c.estado = 'PAGO_PENDIENTE' THEN c.total ELSE 0 END), 0) AS monto_pendiente,
+         COALESCE(SUM(CASE WHEN c.estado = 'CANCELADO' THEN 1 ELSE 0 END), 0) AS ventas_canceladas,
+         COALESCE(COUNT(*), 0) AS ventas_totales
+       FROM compras c
+       LEFT JOIN eventos e ON c.evento_id = e.id
+       WHERE c.usuario_id = ?
+       GROUP BY c.evento_id, e.titulo
+       ORDER BY ingresos_confirmados DESC, ventas_confirmadas DESC`,
+      [usuarioId]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        resumen: {
+          ventas_totales: Number(resumen.ventas_totales || 0),
+          ventas_confirmadas: Number(resumen.ventas_confirmadas || 0),
+          ventas_pendientes: Number(resumen.ventas_pendientes || 0),
+          ventas_canceladas: Number(resumen.ventas_canceladas || 0),
+          ingresos_confirmados: Number(resumen.ingresos_confirmados || 0),
+          monto_pendiente: Number(resumen.monto_pendiente || 0),
+          entradas_confirmadas: Number(resumen.entradas_confirmadas || 0),
+          entradas_pendientes: Number(resumen.entradas_pendientes || 0),
+          ultima_actualizacion: new Date().toISOString()
+        },
+        por_evento: porEventoRows || []
+      }
+    });
+  } catch (error) {
+    console.error('Error al obtener resumen de mis ventas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener el resumen de ventas',
       error: error.message
     });
   }
@@ -2067,8 +2151,18 @@ export const confirmarPago = async (req, res) => {
     const compra = compras[0];
 
     const rolUser = (req.user?.rol || '').toLowerCase();
+    const esVendedor = rolUser === 'vendedor' || rolUser === 'vendedor_externo';
+    const puedeOpcionesVentaAdmin = rolUser === 'admin' || rolUser === 'vendedor';
+
+    if ((tipoVentaValido === 'REGALO_ADMIN' || tipoVentaValido === 'OFERTA_ADMIN') && !puedeOpcionesVentaAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'No tienes permisos para aplicar "Entrada gratis" o "Precio especial"'
+      });
+    }
+
     // Vendedor: solo bloquear si la compra tiene otro dueño asignado (usuario_id no nulo y distinto del vendedor)
-    if (rolUser === 'vendedor' && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
+    if (esVendedor && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
       return res.status(403).json({
         success: false,
         message: 'Solo puedes confirmar pagos de tus propias ventas'
@@ -2357,7 +2451,7 @@ export const cancelarCompra = async (req, res) => {
     const compra = compras[0];
 
     const rolCancel = (req.user?.rol || '').toLowerCase();
-    if (rolCancel === 'vendedor' && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
+    if ((rolCancel === 'vendedor' || rolCancel === 'vendedor_externo') && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
       return res.status(403).json({ success: false, message: 'Solo puedes cancelar tus propias ventas' });
     }
 
@@ -2581,7 +2675,7 @@ export const obtenerPDFBoleto = async (req, res) => {
     const compra = compras[0];
 
     const rolPdf = (req.user?.rol || '').toLowerCase();
-    if (rolPdf === 'vendedor' && (compra.usuario_id == null || compra.usuario_id !== req.user.id)) {
+    if ((rolPdf === 'vendedor' || rolPdf === 'vendedor_externo') && (compra.usuario_id == null || compra.usuario_id !== req.user.id)) {
       return res.status(403).json({ success: false, message: 'Solo puedes acceder a tus propias ventas' });
     }
 
@@ -2718,7 +2812,7 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
     const compra = compras[0];
 
     const rolWa = (req.user?.rol || '').toLowerCase();
-    if (rolWa === 'vendedor' && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
+    if ((rolWa === 'vendedor' || rolWa === 'vendedor_externo') && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
       return res.status(403).json({ success: false, message: 'Solo puedes enviar boletos de tus propias ventas' });
     }
 
@@ -3023,7 +3117,7 @@ export const enviarBoletoPorEmail = async (req, res) => {
     const compra = compras[0];
 
     const rolEmail = (req.user?.rol || '').toLowerCase();
-    if (rolEmail === 'vendedor' && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
+    if ((rolEmail === 'vendedor' || rolEmail === 'vendedor_externo') && compra.usuario_id != null && Number(compra.usuario_id) !== Number(req.user.id)) {
       return res.status(403).json({ success: false, message: 'Solo puedes enviar boletos de tus propias ventas' });
     }
 

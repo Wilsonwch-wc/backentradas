@@ -7,6 +7,9 @@ import {
   actualizarUsuario,
   eliminarUsuario,
   obtenerRoles,
+  crearRol,
+  actualizarRol,
+  eliminarRol,
   borrarTodosLosDatos
 } from '../controllers/usuariosController.js';
 
@@ -21,6 +24,12 @@ router.get('/', obtenerUsuarios);
 
 // Obtener todos los roles
 router.get('/roles', obtenerRoles);
+// Crear rol
+router.post('/roles', crearRol);
+// Actualizar rol
+router.put('/roles/:id', actualizarRol);
+// Eliminar rol
+router.delete('/roles/:id', eliminarRol);
 
 // Obtener un usuario por ID
 router.get('/:id', obtenerUsuarioPorId);

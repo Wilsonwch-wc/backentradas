@@ -274,9 +274,12 @@ export const eliminarUsuario = async (req, res) => {
 // Obtener todos los roles
 export const obtenerRoles = async (req, res) => {
   try {
-    const [roles] = await pool.execute(
-      'SELECT id, nombre, descripcion, activo FROM roles WHERE activo = TRUE ORDER BY nombre'
-    );
+    const incluirTodos = req.query?.todos === '1' || req.query?.todos === 'true';
+    const query = incluirTodos
+      ? 'SELECT id, nombre, descripcion, activo FROM roles ORDER BY nombre'
+      : 'SELECT id, nombre, descripcion, activo FROM roles WHERE activo = TRUE ORDER BY nombre';
+
+    const [roles] = await pool.execute(query);
 
     res.json({
       success: true,
@@ -289,6 +292,118 @@ export const obtenerRoles = async (req, res) => {
       message: 'Error al obtener los roles',
       error: error.message
     });
+  }
+};
+
+// Crear un rol
+export const crearRol = async (req, res) => {
+  try {
+    const { nombre, descripcion, activo } = req.body;
+    const nombreLimpio = String(nombre || '').trim();
+
+    if (!nombreLimpio) {
+      return res.status(400).json({ success: false, message: 'El nombre del rol es requerido' });
+    }
+
+    const [dup] = await pool.execute('SELECT id FROM roles WHERE nombre = ?', [nombreLimpio]);
+    if (dup.length > 0) {
+      return res.status(400).json({ success: false, message: 'Ya existe un rol con ese nombre' });
+    }
+
+    const [result] = await pool.execute(
+      'INSERT INTO roles (nombre, descripcion, activo) VALUES (?, ?, ?)',
+      [nombreLimpio, descripcion ? String(descripcion).trim() : null, activo !== undefined ? !!activo : true]
+    );
+
+    const [roles] = await pool.execute('SELECT id, nombre, descripcion, activo FROM roles WHERE id = ?', [result.insertId]);
+    res.status(201).json({ success: true, message: 'Rol creado exitosamente', data: roles[0] });
+  } catch (error) {
+    console.error('Error al crear rol:', error);
+    res.status(500).json({ success: false, message: 'Error al crear el rol', error: error.message });
+  }
+};
+
+// Actualizar un rol
+export const actualizarRol = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nombre, descripcion, activo } = req.body;
+
+    const [exist] = await pool.execute('SELECT id, nombre FROM roles WHERE id = ?', [id]);
+    if (exist.length === 0) {
+      return res.status(404).json({ success: false, message: 'Rol no encontrado' });
+    }
+
+    const campos = [];
+    const valores = [];
+
+    if (nombre !== undefined) {
+      const nombreLimpio = String(nombre || '').trim();
+      if (!nombreLimpio) {
+        return res.status(400).json({ success: false, message: 'El nombre del rol no puede estar vacío' });
+      }
+      // validar duplicado
+      const [dup] = await pool.execute('SELECT id FROM roles WHERE nombre = ? AND id != ?', [nombreLimpio, id]);
+      if (dup.length > 0) {
+        return res.status(400).json({ success: false, message: 'Ya existe otro rol con ese nombre' });
+      }
+      campos.push('nombre = ?');
+      valores.push(nombreLimpio);
+    }
+
+    if (descripcion !== undefined) {
+      campos.push('descripcion = ?');
+      valores.push(descripcion ? String(descripcion).trim() : null);
+    }
+
+    if (activo !== undefined) {
+      campos.push('activo = ?');
+      valores.push(!!activo);
+    }
+
+    if (campos.length === 0) {
+      return res.status(400).json({ success: false, message: 'No hay campos para actualizar' });
+    }
+
+    valores.push(id);
+    await pool.execute(`UPDATE roles SET ${campos.join(', ')}, updated_at = NOW() WHERE id = ?`, valores);
+
+    const [roles] = await pool.execute('SELECT id, nombre, descripcion, activo FROM roles WHERE id = ?', [id]);
+    res.json({ success: true, message: 'Rol actualizado exitosamente', data: roles[0] });
+  } catch (error) {
+    console.error('Error al actualizar rol:', error);
+    res.status(500).json({ success: false, message: 'Error al actualizar el rol', error: error.message });
+  }
+};
+
+// Eliminar un rol (solo si no está asignado a usuarios)
+export const eliminarRol = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [roles] = await pool.execute('SELECT id, nombre FROM roles WHERE id = ?', [id]);
+    if (roles.length === 0) {
+      return res.status(404).json({ success: false, message: 'Rol no encontrado' });
+    }
+
+    const rolNombre = String(roles[0].nombre || '').toLowerCase();
+    if (rolNombre === 'admin') {
+      return res.status(400).json({ success: false, message: 'No se puede eliminar el rol admin' });
+    }
+
+    const [enUso] = await pool.execute('SELECT COUNT(*) AS total FROM usuarios WHERE id_rol = ?', [id]);
+    if ((enUso?.[0]?.total || 0) > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se puede eliminar este rol porque hay usuarios asignados. Desactívalo en su lugar.'
+      });
+    }
+
+    await pool.execute('DELETE FROM roles WHERE id = ?', [id]);
+    res.json({ success: true, message: 'Rol eliminado exitosamente' });
+  } catch (error) {
+    console.error('Error al eliminar rol:', error);
+    res.status(500).json({ success: false, message: 'Error al eliminar el rol', error: error.message });
   }
 };
 

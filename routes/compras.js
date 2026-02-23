@@ -5,6 +5,7 @@ import {
   obtenerCompras,
   obtenerMisCompras,
   obtenerAsientosOcupados,
+  obtenerResumenMisVentas,
   confirmarPago,
   cancelarCompra,
   reenviarBoleto,
@@ -19,7 +20,7 @@ import {
   desmarcarEscaneo,
   obtenerEntradasEscaneadas
 } from '../controllers/comprasController.js';
-import { verifyToken, optionalAuth, requireAdminOrVendedor, requireAdmin } from '../middleware/auth.js';
+import { verifyToken, optionalAuth, requireAdminOrVendedor, requireAdmin, checkRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -28,20 +29,20 @@ console.log('📦 Router de compras inicializado');
 // IMPORTANTE: Rutas más específicas primero para evitar conflictos
 
 // Buscar entrada por código de escaneo (sin tickear, solo mostrar info)
-router.post('/buscar-entrada', verifyToken, (req, res, next) => {
+router.post('/buscar-entrada', verifyToken, checkRole(['admin', 'seguridad']), (req, res, next) => {
   console.log('🔍 [COMPRAS] POST /buscar-entrada recibida');
   console.log('Body:', JSON.stringify(req.body, null, 2));
   next();
 }, buscarEntradaPorCodigo);
 
 // Tickear entrada (marcar como escaneada)
-router.post('/tickear-entrada', verifyToken, tickearEntrada);
+router.post('/tickear-entrada', verifyToken, checkRole(['admin', 'seguridad']), tickearEntrada);
 
 // Desmarcar escaneo de entrada
-router.post('/desmarcar-escaneo', verifyToken, desmarcarEscaneo);
+router.post('/desmarcar-escaneo', verifyToken, checkRole(['admin', 'seguridad']), desmarcarEscaneo);
 
 // Obtener todas las entradas escaneadas
-router.get('/entradas-escaneadas', verifyToken, obtenerEntradasEscaneadas);
+router.get('/entradas-escaneadas', verifyToken, checkRole(['admin', 'seguridad']), obtenerEntradasEscaneadas);
 
 // Crear compra (público; si hay token de admin/vendedor se guarda usuario_id)
 router.post('/', optionalAuth, crearCompra);
@@ -54,6 +55,9 @@ router.get('/ocupados/:evento_id', obtenerAsientosOcupados);
 
 // Obtener compras del cliente logueado (requiere autenticación - cliente)
 router.get('/mis-compras', verifyToken, obtenerMisCompras);
+
+// Resumen de ventas del usuario logueado (vendedor/vendedor_externo)
+router.get('/mis-ventas/resumen', verifyToken, requireAdminOrVendedor, obtenerResumenMisVentas);
 
 // Obtener todas las compras (admin: todas; vendedor: solo las suyas)
 router.get('/', verifyToken, requireAdminOrVendedor, obtenerCompras);
