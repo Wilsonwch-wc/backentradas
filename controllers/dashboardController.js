@@ -39,14 +39,15 @@ export const obtenerResumenDashboard = async (req, res) => {
       }
       eventosHabilitados = ev?.length ? 1 : 0;
     } else {
-      // Por defecto: solo el próximo evento (activo y que aún no ha pasado)
+      // Por defecto: solo el próximo evento (activo y que aún no ha pasado o en curso)
+      // Usar +12 horas para que el evento siga activo durante su duración
       const [proximos] = await pool.execute(
-        "SELECT id, titulo FROM eventos WHERE estado = 'activo' AND hora_inicio >= NOW() ORDER BY hora_inicio ASC LIMIT 1"
+        "SELECT id, titulo FROM eventos WHERE estado = 'activo' AND (hora_inicio + INTERVAL 12 HOUR) >= NOW() ORDER BY hora_inicio ASC LIMIT 1"
       );
       idsFiltro = proximos.map((r) => r.id);
       nombresEventoActivo = proximos.map((r) => r.titulo).filter(Boolean);
       const [countHabilitados] = await pool.execute(
-        "SELECT COUNT(*) AS total FROM eventos WHERE estado = 'activo' AND hora_inicio >= NOW()"
+        "SELECT COUNT(*) AS total FROM eventos WHERE estado = 'activo' AND (hora_inicio + INTERVAL 12 HOUR) >= NOW()"
       );
       eventosHabilitados = countHabilitados?.[0]?.total ?? 0;
     }

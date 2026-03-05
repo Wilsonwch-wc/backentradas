@@ -48,7 +48,7 @@ export const obtenerEventosParaReportes = async (_req, res) => {
         tipo_evento,
         limite_entradas,
         capacidad_maxima,
-        CASE WHEN hora_inicio >= NOW() THEN 1 ELSE 0 END AS habilitado
+        CASE WHEN (hora_inicio + INTERVAL 12 HOUR) >= NOW() THEN 1 ELSE 0 END AS habilitado
       FROM eventos
       ORDER BY hora_inicio DESC
     `);
@@ -80,7 +80,7 @@ export const obtenerReportePorEvento = async (req, res) => {
           tipo_evento,
           limite_entradas,
           capacidad_maxima,
-          CASE WHEN hora_inicio >= NOW() THEN 1 ELSE 0 END AS habilitado
+          CASE WHEN (hora_inicio + INTERVAL 12 HOUR) >= NOW() THEN 1 ELSE 0 END AS habilitado
         FROM eventos
         WHERE id = ?
       `,

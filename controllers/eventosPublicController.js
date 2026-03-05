@@ -26,12 +26,13 @@ export const obtenerEventosPublicos = async (req, res) => {
     }
     // Filtrar eventos: solo mostrar eventos activos o próximamente, que no estén finalizados u ocultos
     // Si no existe el campo estado, usar solo la fecha
+    // Usar hora_inicio + 12 horas para que el evento siga visible durante su duración
     if (tieneEstado) {
       // Mostrar solo eventos con estado 'activo' o 'proximamente'
       // También incluir eventos con estado NULL (eventos antiguos sin estado definido) para compatibilidad
-      query += ` FROM eventos WHERE (estado IN ('activo', 'proximamente') OR estado IS NULL) AND hora_inicio >= NOW() ORDER BY hora_inicio ASC`;
+      query += ` FROM eventos WHERE (estado IN ('activo', 'proximamente') OR estado IS NULL) AND (hora_inicio + INTERVAL 12 HOUR) >= NOW() ORDER BY hora_inicio ASC`;
     } else {
-      query += ` FROM eventos WHERE hora_inicio >= NOW() ORDER BY hora_inicio ASC`;
+      query += ` FROM eventos WHERE (hora_inicio + INTERVAL 12 HOUR) >= NOW() ORDER BY hora_inicio ASC`;
     }
 
     const [eventos] = await pool.execute(query);

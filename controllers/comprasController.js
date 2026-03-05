@@ -1553,6 +1553,34 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
         const totalConfirmadasGenerales = parseInt(statsGenerales[0]?.total_confirmadas || 0);
         const totalEscaneadasGenerales = parseInt(statsGenerales[0]?.total_escaneadas || 0);
         const totalDisponiblesGenerales = limiteTotal ? Math.max(0, limiteTotal - totalConfirmadasGenerales) : null;
+
+        // Desglose por tipo de entrada (VIP, General, Gradería, etc.)
+        const [desglosePorTipo] = await pool.execute(
+          `SELECT 
+             tp.id as tipo_id,
+             tp.nombre as tipo_nombre,
+             tp.precio,
+             tp.limite,
+             COUNT(eg.id) as vendidas,
+             SUM(CASE WHEN eg.escaneado = TRUE THEN 1 ELSE 0 END) as escaneadas
+           FROM tipos_precio_evento tp
+           LEFT JOIN compras_entradas_generales eg ON eg.tipo_precio_id = tp.id
+           LEFT JOIN compras c ON eg.compra_id = c.id AND c.estado = 'PAGO_REALIZADO'
+           WHERE tp.evento_id = ? AND tp.activo = 1
+           GROUP BY tp.id, tp.nombre, tp.precio, tp.limite
+           ORDER BY tp.nombre`,
+          [evento_id]
+        );
+
+        const desglose_tipos = desglosePorTipo.map(t => ({
+          tipo_id: t.tipo_id,
+          nombre: t.tipo_nombre,
+          precio: parseFloat(t.precio || 0),
+          limite: t.limite ? parseInt(t.limite) : null,
+          vendidas: parseInt(t.vendidas || 0),
+          escaneadas: parseInt(t.escaneadas || 0),
+          disponibles: t.limite ? Math.max(0, parseInt(t.limite) - parseInt(t.vendidas || 0)) : null
+        }));
         
         res.json({
           success: true,
@@ -1569,6 +1597,7 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
               total_escaneadas: totalEscaneadasGenerales,
               total_faltantes: totalConfirmadasGenerales - totalEscaneadasGenerales,
               tipo_evento: 'general',
+              desglose_tipos,
               generales: {
                 limite_total: limiteTotal,
                 vendidas: totalConfirmadasGenerales,
@@ -1849,10 +1878,10 @@ export const obtenerCompras = async (req, res) => {
     let { estado, evento_id } = req.query;
     const rol = (req.user?.rol || '').toLowerCase();
 
-    // "activo" o "proximo" = solo el próximo evento (activo y hora_inicio >= NOW())
+    // "activo" o "proximo" = solo el próximo evento (activo y en curso, +12 horas de duración)
     if (evento_id === 'activo' || evento_id === 'proximo') {
       const [proximos] = await pool.execute(
-        "SELECT id FROM eventos WHERE estado = 'activo' AND hora_inicio >= NOW() ORDER BY hora_inicio ASC LIMIT 1"
+        "SELECT id FROM eventos WHERE estado = 'activo' AND (hora_inicio + INTERVAL 12 HOUR) >= NOW() ORDER BY hora_inicio ASC LIMIT 1"
       );
       evento_id = proximos.length ? String(proximos[0].id) : null;
       if (!evento_id) {
