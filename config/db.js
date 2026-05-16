@@ -10,8 +10,9 @@ const dbConfig = {
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'entradas_db',
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: parseInt(process.env.DB_POOL_SIZE, 10) || 50,
   queueLimit: 0,
+  acquireTimeout: 30000,
   // Zona horaria de Bolivia (UTC-4)
   timezone: '-04:00'
 };

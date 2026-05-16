@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import cron from 'node-cron';
 import routes from './routes/index.js';
 import authRoutes from './routes/auth.js';
 import usuariosRoutes from './routes/usuarios.js';
@@ -33,10 +34,28 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
 
+// Rate limiting
+import rateLimit from 'express-rate-limit';
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Demasiadas peticiones. Intenta de nuevo en 15 minutos.' }
+});
+const compraLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Demasiados intentos de compra. Intenta de nuevo en un momento.' }
+});
+
 // Middlewares
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(generalLimiter);
 
 // Servir archivos estáticos (imágenes subidas)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -85,7 +104,7 @@ app.use('/api/mesas', mesasRoutes); // Rutas para mesas
 app.use('/api/asientos', asientosRoutes); // Rutas para asientos
 app.use('/api/areas', areasRoutes); // Rutas para áreas del layout
 app.use('/api/contacto', contactoRoutes); // Datos de contacto público
-app.use('/api/compras', comprasRoutes); // Rutas para compras
+app.use('/api/compras', compraLimiter, comprasRoutes); // Rutas para compras
 app.use('/api/reportes', reportesRoutes); // Rutas para reportes
 app.use('/api/dashboard', dashboardRoutes); // Rutas para panel
 app.use('/api/seguridad', seguridadRoutes); // Rutas para seguridad (escaneo de QRs)
@@ -94,6 +113,64 @@ app.use('/api/cupones', cuponesRoutes); // Rutas para cupones de descuento
 
 // Log para verificar rutas de seguridad
 console.log('✅ Rutas de seguridad registradas en /api/seguridad');
+
+// Cron: expirar compras pendientes cada 5 minutos
+const EXPIRAR_PENDIENTES_MINUTOS = parseInt(process.env.EXPIRAR_PENDIENTES_MINUTOS, 10) || 15;
+
+const expirarComprasPendientes = async () => {
+  try {
+    const connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      const [pendientes] = await connection.execute(
+        `SELECT id FROM compras 
+         WHERE estado = 'PAGO_PENDIENTE' 
+           AND created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)
+         FOR UPDATE`,
+        [EXPIRAR_PENDIENTES_MINUTOS]
+      );
+
+      if (pendientes.length === 0) {
+        await connection.commit();
+        connection.release();
+        return;
+      }
+
+      const ids = pendientes.map(p => p.id);
+
+      await connection.execute(
+        `UPDATE compras SET estado = 'CANCELADO' WHERE id IN (?) AND estado = 'PAGO_PENDIENTE'`,
+        [ids]
+      );
+      await connection.execute(
+        `UPDATE compras_asientos SET estado = 'CANCELADO' WHERE compra_id IN (?)`,
+        [ids]
+      );
+      await connection.execute(
+        `UPDATE compras_mesas SET estado = 'CANCELADO' WHERE compra_id IN (?)`,
+        [ids]
+      );
+      await connection.execute(
+        `UPDATE compras_areas_personas SET estado = 'CANCELADO' WHERE compra_id IN (?)`,
+        [ids]
+      );
+
+      await connection.commit();
+      connection.release();
+      console.log(`⏰ Compras pendientes expiradas: ${ids.length} (mayores a ${EXPIRAR_PENDIENTES_MINUTOS} min)`);
+    } catch (error) {
+      await connection.rollback();
+      connection.release();
+      console.error('❌ Error en cron expirar compras pendientes:', error.message);
+    }
+  } catch (error) {
+    console.error('❌ Error de conexion en cron expirar compras pendientes:', error.message);
+  }
+};
+
+cron.schedule('*/5 * * * *', expirarComprasPendientes);
+console.log(`⏰ Cron activado: expirar compras pendientes cada 5 min (limite: ${EXPIRAR_PENDIENTES_MINUTOS} min)`);
 
 // Iniciar aplicación
 app.listen(PORT, HOST, async () => {

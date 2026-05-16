@@ -114,97 +114,103 @@ export const crearCompra = async (req, res) => {
       // Evento general: el cupo lo define cada tipo de precio (límite por tipo), no el evento
     }
 
-    // Validar y aplicar cupón si se proporciona (solo para ventas normales)
-    if (codigo_cupon && tipoVentaValido === 'NORMAL') {
-      const codigoCuponUpper = codigo_cupon.toUpperCase().trim();
-      
-      // Buscar el cupón
-      const [cupones] = await pool.execute(
-        `SELECT c.*, e.titulo as evento_titulo
-         FROM cupones c
-         INNER JOIN eventos e ON c.evento_id = e.id
-         WHERE c.codigo = ? AND c.evento_id = ?`,
-        [codigoCuponUpper, evento_id]
-      );
-
-      if (cupones.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: 'Cupón no encontrado para este evento'
-        });
-      }
-
-      const cupon = cupones[0];
-
-      // Validar que esté activo
-      if (!cupon.activo) {
-        return res.status(400).json({
-          success: false,
-          message: 'Este cupón no está activo'
-        });
-      }
-
-      // Validar límite de usos (total del cupón)
-      if (cupon.usos_actuales >= cupon.limite_usos) {
-        return res.status(400).json({
-          success: false,
-          message: 'Este cupón ha alcanzado su límite de usos'
-        });
-      }
-
-      // Validar usos por cliente (1, 2, n veces por mismo email; 0 o null = sin límite)
-      const limitePorCliente = cupon.limite_por_cliente != null ? parseInt(cupon.limite_por_cliente, 10) : 0;
-      if (limitePorCliente > 0 && cliente_email) {
-        const [usosCliente] = await pool.execute(
-          `SELECT COUNT(*) as total FROM cupones_usados u
-           INNER JOIN compras c ON c.id = u.compra_id
-           WHERE u.cupon_id = ? AND LOWER(TRIM(IFNULL(c.cliente_email, ''))) = LOWER(TRIM(?))`,
-          [cupon.id, cliente_email]
-        );
-        const usosDelCliente = parseInt(usosCliente[0]?.total || 0, 10);
-        if (usosDelCliente >= limitePorCliente) {
-          return res.status(400).json({
-            success: false,
-            message: `Este cupón solo puede usarse ${limitePorCliente} vez${limitePorCliente > 1 ? 'ces' : ''} por cliente. Ya lo utilizaste.`
-          });
-        }
-      }
-
-      // Validar fechas
-      const ahora = new Date();
-      if (cupon.fecha_inicio && new Date(cupon.fecha_inicio) > ahora) {
-        return res.status(400).json({
-          success: false,
-          message: 'Este cupón aún no está disponible'
-        });
-      }
-
-      if (cupon.fecha_fin && new Date(cupon.fecha_fin) < ahora) {
-        return res.status(400).json({
-          success: false,
-          message: 'Este cupón ha expirado'
-        });
-      }
-
-      // Calcular descuento
-      const porcentajeDescuento = parseFloat(cupon.porcentaje_descuento);
-      descuentoCupon = (totalFinal * porcentajeDescuento) / 100;
-      totalAntesDescuento = totalFinal;
-      totalFinal = totalFinal - descuentoCupon;
-      cuponId = cupon.id;
-
-      // Asegurar que el total no sea negativo
-      if (totalFinal < 0) {
-        totalFinal = 0;
-        descuentoCupon = totalAntesDescuento;
-      }
-    }
-
     // Iniciar transacción
     const connection = await pool.getConnection();
     await connection.beginTransaction();
 
     try {
+      // Validar y aplicar cupón si se proporciona (solo para ventas normales) - DENTRO de la transacción para evitar race conditions
+      if (codigo_cupon && tipoVentaValido === 'NORMAL') {
+        const codigoCuponUpper = codigo_cupon.toUpperCase().trim();
+        
+        const [cupones] = await connection.execute(
+          `SELECT c.*, e.titulo as evento_titulo
+           FROM cupones c
+           INNER JOIN eventos e ON c.evento_id = e.id
+           WHERE c.codigo = ? AND c.evento_id = ?
+           FOR UPDATE`,
+          [codigoCuponUpper, evento_id]
+        );
+
+        if (cupones.length === 0) {
+          await connection.rollback();
+          connection.release();
+          return res.status(404).json({
+            success: false,
+            message: 'Cupón no encontrado para este evento'
+          });
+        }
+
+        const cupon = cupones[0];
+
+        if (!cupon.activo) {
+          await connection.rollback();
+          connection.release();
+          return res.status(400).json({
+            success: false,
+            message: 'Este cupón no está activo'
+          });
+        }
+
+        if (cupon.usos_actuales >= cupon.limite_usos) {
+          await connection.rollback();
+          connection.release();
+          return res.status(400).json({
+            success: false,
+            message: 'Este cupón ha alcanzado su límite de usos'
+          });
+        }
+
+        const limitePorCliente = cupon.limite_por_cliente != null ? parseInt(cupon.limite_por_cliente, 10) : 0;
+        if (limitePorCliente > 0 && cliente_email) {
+          const [usosCliente] = await connection.execute(
+            `SELECT COUNT(*) as total FROM cupones_usados u
+             INNER JOIN compras c ON c.id = u.compra_id
+             WHERE u.cupon_id = ? AND LOWER(TRIM(IFNULL(c.cliente_email, ''))) = LOWER(TRIM(?))`,
+            [cupon.id, cliente_email]
+          );
+          const usosDelCliente = parseInt(usosCliente[0]?.total || 0, 10);
+          if (usosDelCliente >= limitePorCliente) {
+            await connection.rollback();
+            connection.release();
+            return res.status(400).json({
+              success: false,
+              message: `Este cupón solo puede usarse ${limitePorCliente} vez${limitePorCliente > 1 ? 'ces' : ''} por cliente. Ya lo utilizaste.`
+            });
+          }
+        }
+
+        const ahora = new Date();
+        if (cupon.fecha_inicio && new Date(cupon.fecha_inicio) > ahora) {
+          await connection.rollback();
+          connection.release();
+          return res.status(400).json({
+            success: false,
+            message: 'Este cupón aún no está disponible'
+          });
+        }
+
+        if (cupon.fecha_fin && new Date(cupon.fecha_fin) < ahora) {
+          await connection.rollback();
+          connection.release();
+          return res.status(400).json({
+            success: false,
+            message: 'Este cupón ha expirado'
+          });
+        }
+
+        const porcentajeDescuento = parseFloat(cupon.porcentaje_descuento);
+        descuentoCupon = (totalFinal * porcentajeDescuento) / 100;
+        totalAntesDescuento = totalFinal;
+        totalFinal = totalFinal - descuentoCupon;
+        cuponId = cupon.id;
+
+        if (totalFinal < 0) {
+          totalFinal = 0;
+          descuentoCupon = totalAntesDescuento;
+        }
+      }
+
       // Generar código único
       let codigoUnico = generarCodigoUnico();
       
@@ -292,7 +298,7 @@ export const crearCompra = async (req, res) => {
 
           // Verificar que el asiento no esté ya reservado/confirmado
           const [asientoOcupado] = await connection.execute(
-            `SELECT id FROM compras_asientos WHERE asiento_id = ? AND estado IN ('RESERVADO','CONFIRMADO')`,
+            `SELECT id FROM compras_asientos WHERE asiento_id = ? AND estado IN ('RESERVADO','CONFIRMADO') FOR UPDATE`,
             [asiento.id]
           );
           if (asientoOcupado.length > 0) {
@@ -321,7 +327,8 @@ export const crearCompra = async (req, res) => {
                    SELECT id FROM compras 
                    WHERE evento_id = ? 
                      AND estado IN ('PAGO_PENDIENTE', 'PAGO_REALIZADO')
-                 )`,
+                 )
+               FOR UPDATE`,
               [mesaId, evento_id]
             );
             
@@ -366,7 +373,7 @@ export const crearCompra = async (req, res) => {
 
           // Verificar que la mesa no esté ya reservada/confirmada
           const [mesaOcupada] = await connection.execute(
-            `SELECT id FROM compras_mesas WHERE mesa_id = ? AND estado IN ('RESERVADO','CONFIRMADO')`,
+            `SELECT id FROM compras_mesas WHERE mesa_id = ? AND estado IN ('RESERVADO','CONFIRMADO') FOR UPDATE`,
             [mesa.mesa_id]
           );
           if (mesaOcupada.length > 0) {
@@ -425,7 +432,8 @@ export const crearCompra = async (req, res) => {
              FROM compras_areas_personas cap
              INNER JOIN compras c ON cap.compra_id = c.id
              WHERE cap.area_id = ? AND c.estado IN ('PAGO_PENDIENTE', 'PAGO_REALIZADO', 'ENTRADA_USADA')
-               AND cap.estado IN ('RESERVADO', 'CONFIRMADO')`,
+               AND cap.estado IN ('RESERVADO', 'CONFIRMADO')
+             FOR UPDATE`,
             [areaId]
           );
           const reservadas = parseInt(reservas[0]?.total || 0);

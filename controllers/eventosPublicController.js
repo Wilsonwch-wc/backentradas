@@ -5,8 +5,16 @@ const columnasEventoPublicQuery = `
   SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
   WHERE TABLE_SCHEMA = DATABASE() 
     AND TABLE_NAME = 'eventos' 
-    AND COLUMN_NAME IN ('forma_espacio', 'escenario_x', 'escenario_y', 'escenario_width', 'escenario_height', 'hoja_ancho', 'hoja_alto', 'qr_pago_url', 'estado')
+    AND COLUMN_NAME IN ('forma_espacio', 'escenario_x', 'escenario_y', 'escenario_width', 'escenario_height', 'hoja_ancho', 'hoja_alto', 'qr_pago_url', 'estado', 'ubicacion', 'ciudad', 'ubicacion_url')
 `;
+
+const appendColumnasUbicacionPublic = (query, columnasExistentes) => {
+  let q = query;
+  if (columnasExistentes.includes('ubicacion')) q += `, ubicacion`;
+  if (columnasExistentes.includes('ciudad')) q += `, ciudad`;
+  if (columnasExistentes.includes('ubicacion_url')) q += `, ubicacion_url`;
+  return q;
+};
 
 // Obtener todos los eventos (público - sin autenticación)
 export const obtenerEventosPublicos = async (req, res) => {
@@ -24,6 +32,7 @@ export const obtenerEventosPublicos = async (req, res) => {
     if (tieneEstado) {
       query += `, estado`;
     }
+    query = appendColumnasUbicacionPublic(query, columnasExistentes);
     // Filtrar eventos: solo mostrar eventos activos o próximamente, que no estén finalizados u ocultos
     // Si no existe el campo estado, usar solo la fecha
     // Usar hora_inicio + 12 horas para que el evento siga visible durante su duración
@@ -207,6 +216,7 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
     if (tieneEstado) {
       query += `, estado`;
     }
+    query = appendColumnasUbicacionPublic(query, columnasExistentes);
     
     // Si es numérico, buscar por ID. Si no, buscar por título convertido a slug
     const isNumeric = /^\d+$/.test(id);
@@ -250,6 +260,7 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
           if (tieneEstado) {
             query += `, estado`;
           }
+          query = appendColumnasUbicacionPublic(query, columnasExistentes);
           query += ` FROM eventos WHERE id = ?${filtroEstado}`;
           const [eventosPorId] = await pool.execute(query, [numId]);
           if (eventosPorId.length > 0) {

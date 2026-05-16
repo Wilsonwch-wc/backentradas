@@ -9,9 +9,18 @@ const columnasEventoQuery = `
       'forma_espacio', 'escenario_x', 'escenario_y',
       'escenario_width', 'escenario_height',
       'layout_bloqueado', 'hoja_ancho', 'hoja_alto',
-      'qr_pago_url', 'estado'
+      'qr_pago_url', 'estado',
+      'ubicacion', 'ciudad', 'ubicacion_url'
     )
 `;
+
+const appendColumnasUbicacion = (query, columnasExistentes) => {
+  let q = query;
+  if (columnasExistentes.includes('ubicacion')) q += `, ubicacion`;
+  if (columnasExistentes.includes('ciudad')) q += `, ciudad`;
+  if (columnasExistentes.includes('ubicacion_url')) q += `, ubicacion_url`;
+  return q;
+};
 
 // Obtener todos los eventos
 export const obtenerEventos = async (req, res) => {
@@ -44,6 +53,7 @@ export const obtenerEventos = async (req, res) => {
     if (tieneEstado) {
       query += `, estado`;
     }
+    query = appendColumnasUbicacion(query, columnasExistentes);
     
     query += ` FROM eventos ORDER BY hora_inicio DESC`;
     
@@ -96,6 +106,7 @@ export const obtenerEventoPorId = async (req, res) => {
     if (tieneEstado) {
       query += `, estado`;
     }
+    query = appendColumnasUbicacion(query, columnasExistentes);
     
     query += ` FROM eventos WHERE id = ?`;
     
@@ -125,7 +136,7 @@ export const obtenerEventoPorId = async (req, res) => {
 // Crear un nuevo evento
 export const crearEvento = async (req, res) => {
   try {
-    const { imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, qr_pago_url, estado } = req.body;
+    const { imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, qr_pago_url, estado, ubicacion, ciudad, ubicacion_url } = req.body;
 
     // Validaciones básicas
     if (!titulo || !descripcion || !hora_inicio) {
@@ -171,6 +182,9 @@ export const crearEvento = async (req, res) => {
     const columnasExistentes = columnas.map(c => c.COLUMN_NAME);
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
     const tieneEstado = columnasExistentes.includes('estado');
+    const tieneUbicacion = columnasExistentes.includes('ubicacion');
+    const tieneCiudad = columnasExistentes.includes('ciudad');
+    const tieneUbicacionUrl = columnasExistentes.includes('ubicacion_url');
     
     // Validar estado si se proporciona
     const estadosValidos = ['activo', 'proximamente', 'finalizado'];
@@ -221,6 +235,21 @@ export const crearEvento = async (req, res) => {
       placeholders.push('?');
       valores.push(estadoFinal);
     }
+    if (tieneUbicacion) {
+      campos.push('ubicacion');
+      placeholders.push('?');
+      valores.push(ubicacion?.trim() || null);
+    }
+    if (tieneCiudad) {
+      campos.push('ciudad');
+      placeholders.push('?');
+      valores.push(ciudad?.trim() || null);
+    }
+    if (tieneUbicacionUrl) {
+      campos.push('ubicacion_url');
+      placeholders.push('?');
+      valores.push(ubicacion_url?.trim() || null);
+    }
 
     const [result] = await pool.execute(
       `INSERT INTO eventos (${campos.join(', ')})
@@ -236,6 +265,7 @@ export const crearEvento = async (req, res) => {
     if (tieneEstado) {
       querySelect += `, estado`;
     }
+    querySelect = appendColumnasUbicacion(querySelect, columnasExistentes);
     querySelect += ` FROM eventos WHERE id = ?`;
 
     const [eventos] = await pool.execute(querySelect, [result.insertId]);
@@ -261,7 +291,8 @@ export const actualizarEvento = async (req, res) => {
     const { id } = req.params;
     const { imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas,
             forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, layout_bloqueado,
-            hoja_ancho, hoja_alto, qr_pago_url, estado } = req.body;
+            hoja_ancho, hoja_alto, qr_pago_url, estado,
+            ubicacion, ciudad, ubicacion_url } = req.body;
 
     // Verificar si el evento existe
     const [eventosExistentes] = await pool.execute(
@@ -378,12 +409,12 @@ export const actualizarEvento = async (req, res) => {
     const tieneEstado = columnasExistentes.includes('estado');
 
     if (tieneHojaAncho && hoja_ancho !== undefined) {
-      const ancho = hoja_ancho != null && !isNaN(Number(hoja_ancho)) ? Math.max(100, Math.min(5000, Number(hoja_ancho))) : null;
+      const ancho = hoja_ancho != null && !isNaN(Number(hoja_ancho)) ? Math.max(100, Math.min(8000, Number(hoja_ancho))) : null;
       campos.push('hoja_ancho = ?');
       valores.push(ancho);
     }
     if (tieneHojaAlto && hoja_alto !== undefined) {
-      const alto = hoja_alto != null && !isNaN(Number(hoja_alto)) ? Math.max(100, Math.min(5000, Number(hoja_alto))) : null;
+      const alto = hoja_alto != null && !isNaN(Number(hoja_alto)) ? Math.max(100, Math.min(6000, Number(hoja_alto))) : null;
       campos.push('hoja_alto = ?');
       valores.push(alto);
     }
@@ -398,6 +429,18 @@ export const actualizarEvento = async (req, res) => {
         campos.push('estado = ?');
         valores.push(estado);
       }
+    }
+    if (columnasExistentes.includes('ubicacion') && ubicacion !== undefined) {
+      campos.push('ubicacion = ?');
+      valores.push(ubicacion?.trim() || null);
+    }
+    if (columnasExistentes.includes('ciudad') && ciudad !== undefined) {
+      campos.push('ciudad = ?');
+      valores.push(ciudad?.trim() || null);
+    }
+    if (columnasExistentes.includes('ubicacion_url') && ubicacion_url !== undefined) {
+      campos.push('ubicacion_url = ?');
+      valores.push(ubicacion_url?.trim() || null);
     }
 
     if (campos.length === 0) {
@@ -432,6 +475,7 @@ export const actualizarEvento = async (req, res) => {
     if (tieneEstado) {
       querySelect += `, estado`;
     }
+    querySelect = appendColumnasUbicacion(querySelect, columnasExistentes);
     querySelect += ` FROM eventos WHERE id = ?`;
     
     // Obtener el evento actualizado
