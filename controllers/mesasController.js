@@ -1,5 +1,13 @@
 import pool from '../config/db.js';
 
+const MESA_PRECIOS_SQL = `m.precio_mesa_completa, m.precio_silla_individual, m.venta_solo_mesa`;
+
+const parsePrecioOpcional = (val) => {
+  if (val === undefined || val === null || val === '') return null;
+  const n = parseFloat(val);
+  return Number.isNaN(n) || n < 0 ? null : n;
+};
+
 // Obtener todas las mesas de un evento
 export const obtenerMesasPorEvento = async (req, res) => {
   try {
@@ -7,7 +15,8 @@ export const obtenerMesasPorEvento = async (req, res) => {
 
     const [mesas] = await pool.execute(
       `SELECT m.id, m.evento_id, m.numero_mesa, m.capacidad_sillas, m.tipo_precio_id, 
-              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id, m.created_at, m.updated_at,
+              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id,
+              ${MESA_PRECIOS_SQL}, m.created_at, m.updated_at,
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               a.nombre as area_nombre
        FROM mesas m
@@ -39,7 +48,8 @@ export const obtenerMesaPorId = async (req, res) => {
 
     const [mesas] = await pool.execute(
       `SELECT m.id, m.evento_id, m.numero_mesa, m.capacidad_sillas, m.tipo_precio_id, 
-              m.activo, m.posicion_x, m.posicion_y, m.area_id, m.created_at, m.updated_at,
+              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id,
+              ${MESA_PRECIOS_SQL}, m.created_at, m.updated_at,
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               a.nombre as area_nombre
        FROM mesas m
@@ -73,7 +83,11 @@ export const obtenerMesaPorId = async (req, res) => {
 // Crear una nueva mesa
 export const crearMesa = async (req, res) => {
   try {
-    const { evento_id, numero_mesa, capacidad_sillas, tipo_precio_id, area_id, posicion_x, posicion_y, ancho, alto } = req.body;
+    const {
+      evento_id, numero_mesa, capacidad_sillas, tipo_precio_id, area_id,
+      posicion_x, posicion_y, ancho, alto,
+      precio_mesa_completa, precio_silla_individual, venta_solo_mesa
+    } = req.body;
 
     // Validaciones
     if (!evento_id || !numero_mesa || !capacidad_sillas || !tipo_precio_id) {
@@ -153,11 +167,19 @@ export const crearMesa = async (req, res) => {
       areaIdFinal = area_id;
     }
 
+    const ventaSolo = venta_solo_mesa === true || venta_solo_mesa === 1 || venta_solo_mesa === '1';
+    const precioMesa = parsePrecioOpcional(precio_mesa_completa);
+    const precioSilla = ventaSolo ? null : parsePrecioOpcional(precio_silla_individual);
+
     // Insertar nueva mesa
     const [result] = await pool.execute(
-      `INSERT INTO mesas (evento_id, numero_mesa, capacidad_sillas, tipo_precio_id, area_id, posicion_x, posicion_y, ancho, alto)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [evento_id, numero_mesa, capacidad_sillas, tipo_precio_id, areaIdFinal, posicion_x || null, posicion_y || null, ancho || null, alto || null]
+      `INSERT INTO mesas (evento_id, numero_mesa, capacidad_sillas, tipo_precio_id, area_id, posicion_x, posicion_y, ancho, alto, precio_mesa_completa, precio_silla_individual, venta_solo_mesa)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        evento_id, numero_mesa, capacidad_sillas, tipo_precio_id, areaIdFinal,
+        posicion_x || null, posicion_y || null, ancho || null, alto || null,
+        precioMesa, precioSilla, ventaSolo ? 1 : 0
+      ]
     );
 
     // Obtener la mesa creada
@@ -192,7 +214,11 @@ export const crearMesa = async (req, res) => {
 export const actualizarMesa = async (req, res) => {
   try {
     const { id } = req.params;
-    const { numero_mesa, capacidad_sillas, tipo_precio_id, activo, posicion_x, posicion_y, ancho, alto, area_id } = req.body;
+    const {
+      numero_mesa, capacidad_sillas, tipo_precio_id, activo,
+      posicion_x, posicion_y, ancho, alto, area_id,
+      precio_mesa_completa, precio_silla_individual, venta_solo_mesa
+    } = req.body;
 
     // Verificar si la mesa existe
     const [mesasExistentes] = await pool.execute(
@@ -294,6 +320,18 @@ export const actualizarMesa = async (req, res) => {
       campos.push('area_id = ?');
       valores.push(areaIdFinal);
     }
+    if (precio_mesa_completa !== undefined) {
+      campos.push('precio_mesa_completa = ?');
+      valores.push(parsePrecioOpcional(precio_mesa_completa));
+    }
+    if (precio_silla_individual !== undefined) {
+      campos.push('precio_silla_individual = ?');
+      valores.push(parsePrecioOpcional(precio_silla_individual));
+    }
+    if (venta_solo_mesa !== undefined) {
+      campos.push('venta_solo_mesa = ?');
+      valores.push(venta_solo_mesa === true || venta_solo_mesa === 1 || venta_solo_mesa === '1' ? 1 : 0);
+    }
 
     if (campos.length === 0) {
       return res.status(400).json({
@@ -312,7 +350,8 @@ export const actualizarMesa = async (req, res) => {
     // Obtener la mesa actualizada
     const [mesas] = await pool.execute(
       `SELECT m.id, m.evento_id, m.numero_mesa, m.capacidad_sillas, m.tipo_precio_id, 
-              m.activo, m.posicion_x, m.posicion_y, m.area_id, m.created_at, m.updated_at,
+              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id,
+              ${MESA_PRECIOS_SQL}, m.created_at, m.updated_at,
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               a.nombre as area_nombre
        FROM mesas m

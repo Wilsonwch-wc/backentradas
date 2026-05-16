@@ -125,7 +125,8 @@ export const obtenerPlanoPorZona = async (req, res) => {
     const ah = Number(area.alto ?? 0);
 
     const [mesas] = await pool.execute(
-      `SELECT id, numero_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto
+      `SELECT id, numero_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto,
+              precio_mesa_completa, precio_silla_individual, venta_solo_mesa
        FROM mesas
        WHERE evento_id = ? AND activo = 1 AND (
          area_id = ?
@@ -298,7 +299,8 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
 
       // Obtener mesas con sus posiciones y dimensiones
       const [mesas] = await pool.execute(
-        `SELECT id, numero_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto
+        `SELECT id, numero_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto,
+                precio_mesa_completa, precio_silla_individual, venta_solo_mesa
          FROM mesas
          WHERE evento_id = ? AND activo = 1
          ORDER BY numero_mesa ASC`,
