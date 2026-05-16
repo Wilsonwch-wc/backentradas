@@ -157,12 +157,13 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
   }
 
   // Asiento (si aplica)
-  if (asiento && asiento.numero_asiento) {
-    let asientoTexto = `Asiento: ${asiento.numero_asiento}`;
+  if (asiento && (asiento.numero_asiento || asiento.codigo_asiento)) {
+    const asientoLabel = asiento.codigo_asiento || asiento.numero_asiento;
+    let asientoTexto = `Asiento: ${asientoLabel}`;
     if (asiento.numero_mesa) {
-      asientoTexto = `Asiento: FILA ${asiento.numero_mesa}-${asiento.numero_asiento}`;
+      asientoTexto = `Asiento: FILA ${asiento.numero_mesa}-${asientoLabel}`;
     } else if (asiento.area_nombre) {
-      asientoTexto = `Asiento: ${asiento.area_nombre} - ${asiento.numero_asiento}`;
+      asientoTexto = `Asiento: ${asiento.area_nombre} - ${asientoLabel}`;
     }
     
     doc.fontSize(8)
@@ -368,7 +369,7 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
       totalItems += subtotal;
 
       const itemText = `${evento.titulo || 'Evento'}`;
-      const detalleText = `${tipoPrecio} ${asiento.numero_asiento || ''}`;
+      const detalleText = `${tipoPrecio} ${asiento.codigo_asiento || asiento.numero_asiento || ''}`;
       
       doc.fontSize(7)
          .font('Helvetica')

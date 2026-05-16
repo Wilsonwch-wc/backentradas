@@ -125,7 +125,7 @@ export const obtenerPlanoPorZona = async (req, res) => {
     const ah = Number(area.alto ?? 0);
 
     const [mesas] = await pool.execute(
-      `SELECT id, numero_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto,
+      `SELECT id, numero_mesa, codigo_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto,
               precio_mesa_completa, precio_silla_individual, venta_solo_mesa
        FROM mesas
        WHERE evento_id = ? AND activo = 1 AND (
@@ -145,7 +145,7 @@ export const obtenerPlanoPorZona = async (req, res) => {
 
     if (idsMesas.length > 0) {
       const [asientosMesas] = await pool.execute(
-        `SELECT a.id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, a.estado,
+        `SELECT a.id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, a.estado,
                 a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre
          FROM asientos a
          LEFT JOIN areas_layout ar ON a.area_id = ar.id
@@ -157,7 +157,7 @@ export const obtenerPlanoPorZona = async (req, res) => {
     }
 
     const [asientosSueltos] = await pool.execute(
-      `SELECT a.id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, a.estado,
+      `SELECT a.id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, a.estado,
               a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre
        FROM asientos a
        LEFT JOIN areas_layout ar ON a.area_id = ar.id
@@ -299,18 +299,18 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
 
       // Obtener mesas con sus posiciones y dimensiones
       const [mesas] = await pool.execute(
-        `SELECT id, numero_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto,
+        `SELECT id, numero_mesa, codigo_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto,
                 precio_mesa_completa, precio_silla_individual, venta_solo_mesa
          FROM mesas
          WHERE evento_id = ? AND activo = 1
-         ORDER BY numero_mesa ASC`,
+         ORDER BY COALESCE(codigo_mesa, CAST(numero_mesa AS CHAR)) ASC`,
         [eventoId]
       );
       evento.mesas = mesas;
 
       // Obtener asientos con sus posiciones, estado y área
       const [asientos] = await pool.execute(
-        `SELECT a.id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, a.estado, 
+        `SELECT a.id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, a.estado, 
                 a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre
          FROM asientos a
          LEFT JOIN areas_layout ar ON a.area_id = ar.id

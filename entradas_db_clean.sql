@@ -127,6 +127,7 @@ CREATE TABLE `mesas` (
   `id` int NOT NULL AUTO_INCREMENT,
   `evento_id` int NOT NULL,
   `numero_mesa` int NOT NULL,
+  `codigo_mesa` varchar(20) DEFAULT NULL COMMENT 'Etiqueta en plano: A1, B15, etc.',
   `capacidad_sillas` int NOT NULL DEFAULT '1',
   `tipo_precio_id` int NOT NULL,
   `activo` tinyint(1) DEFAULT '1',

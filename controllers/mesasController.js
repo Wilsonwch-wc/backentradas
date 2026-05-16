@@ -1,6 +1,10 @@
 import pool from '../config/db.js';
 
 const MESA_PRECIOS_SQL = `m.precio_mesa_completa, m.precio_silla_individual, m.venta_solo_mesa`;
+const MESA_CODIGO_SQL = `m.codigo_mesa`;
+const MESA_SELECT_BASE = `m.id, m.evento_id, m.numero_mesa, ${MESA_CODIGO_SQL}, m.capacidad_sillas, m.tipo_precio_id,
+              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id,
+              ${MESA_PRECIOS_SQL}, m.created_at, m.updated_at`;
 
 const parsePrecioOpcional = (val) => {
   if (val === undefined || val === null || val === '') return null;
@@ -14,16 +18,14 @@ export const obtenerMesasPorEvento = async (req, res) => {
     const { eventoId } = req.params;
 
     const [mesas] = await pool.execute(
-      `SELECT m.id, m.evento_id, m.numero_mesa, m.capacidad_sillas, m.tipo_precio_id, 
-              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id,
-              ${MESA_PRECIOS_SQL}, m.created_at, m.updated_at,
+      `SELECT ${MESA_SELECT_BASE},
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               a.nombre as area_nombre
        FROM mesas m
        LEFT JOIN tipos_precio_evento tp ON m.tipo_precio_id = tp.id
        LEFT JOIN areas_layout a ON m.area_id = a.id
        WHERE m.evento_id = ? AND m.activo = 1
-       ORDER BY m.numero_mesa ASC`,
+       ORDER BY COALESCE(m.codigo_mesa, CAST(m.numero_mesa AS CHAR)) ASC`,
       [eventoId]
     );
 
@@ -47,9 +49,7 @@ export const obtenerMesaPorId = async (req, res) => {
     const { id } = req.params;
 
     const [mesas] = await pool.execute(
-      `SELECT m.id, m.evento_id, m.numero_mesa, m.capacidad_sillas, m.tipo_precio_id, 
-              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id,
-              ${MESA_PRECIOS_SQL}, m.created_at, m.updated_at,
+      `SELECT ${MESA_SELECT_BASE},
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               a.nombre as area_nombre
        FROM mesas m
@@ -84,18 +84,32 @@ export const obtenerMesaPorId = async (req, res) => {
 export const crearMesa = async (req, res) => {
   try {
     const {
-      evento_id, numero_mesa, capacidad_sillas, tipo_precio_id, area_id,
+      evento_id, numero_mesa, codigo_mesa, capacidad_sillas, tipo_precio_id, area_id,
       posicion_x, posicion_y, ancho, alto,
       precio_mesa_completa, precio_silla_individual, venta_solo_mesa
     } = req.body;
 
     // Validaciones
-    if (!evento_id || !numero_mesa || !capacidad_sillas || !tipo_precio_id) {
+    if (!evento_id || !capacidad_sillas || !tipo_precio_id) {
       return res.status(400).json({
         success: false,
-        message: 'Faltan campos requeridos: evento_id, numero_mesa, capacidad_sillas, tipo_precio_id'
+        message: 'Faltan campos requeridos: evento_id, capacidad_sillas, tipo_precio_id'
       });
     }
+
+    let numeroMesaFinal = numero_mesa;
+    if (numeroMesaFinal === undefined || numeroMesaFinal === null || numeroMesaFinal === '') {
+      const [maxRow] = await pool.execute(
+        'SELECT COALESCE(MAX(numero_mesa), 0) + 1 AS n FROM mesas WHERE evento_id = ?',
+        [evento_id]
+      );
+      numeroMesaFinal = maxRow[0].n;
+    }
+
+    const codigoMesaFinal =
+      codigo_mesa != null && String(codigo_mesa).trim() !== ''
+        ? String(codigo_mesa).trim().toUpperCase()
+        : null;
 
     // Validar que el evento existe y es especial
     const [eventos] = await pool.execute(
@@ -138,17 +152,29 @@ export const crearMesa = async (req, res) => {
       });
     }
 
-    // Validar que el número de mesa no esté duplicado para este evento
     const [mesasExistentes] = await pool.execute(
       'SELECT id FROM mesas WHERE evento_id = ? AND numero_mesa = ?',
-      [evento_id, numero_mesa]
+      [evento_id, numeroMesaFinal]
     );
 
     if (mesasExistentes.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'Ya existe una mesa con ese número para este evento'
+        message: 'Ya existe una mesa con ese número interno para este evento'
       });
+    }
+
+    if (codigoMesaFinal) {
+      const [dupCodigo] = await pool.execute(
+        'SELECT id FROM mesas WHERE evento_id = ? AND codigo_mesa = ?',
+        [evento_id, codigoMesaFinal]
+      );
+      if (dupCodigo.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Ya existe una mesa con el código ${codigoMesaFinal} en este evento`
+        });
+      }
     }
 
     // Validar area_id si se proporciona
@@ -173,10 +199,10 @@ export const crearMesa = async (req, res) => {
 
     // Insertar nueva mesa
     const [result] = await pool.execute(
-      `INSERT INTO mesas (evento_id, numero_mesa, capacidad_sillas, tipo_precio_id, area_id, posicion_x, posicion_y, ancho, alto, precio_mesa_completa, precio_silla_individual, venta_solo_mesa)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO mesas (evento_id, numero_mesa, codigo_mesa, capacidad_sillas, tipo_precio_id, area_id, posicion_x, posicion_y, ancho, alto, precio_mesa_completa, precio_silla_individual, venta_solo_mesa)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        evento_id, numero_mesa, capacidad_sillas, tipo_precio_id, areaIdFinal,
+        evento_id, numeroMesaFinal, codigoMesaFinal, capacidad_sillas, tipo_precio_id, areaIdFinal,
         posicion_x || null, posicion_y || null, ancho || null, alto || null,
         precioMesa, precioSilla, ventaSolo ? 1 : 0
       ]
@@ -184,8 +210,7 @@ export const crearMesa = async (req, res) => {
 
     // Obtener la mesa creada
     const [mesas] = await pool.execute(
-      `SELECT m.id, m.evento_id, m.numero_mesa, m.capacidad_sillas, m.tipo_precio_id, 
-              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id, m.created_at, m.updated_at,
+      `SELECT ${MESA_SELECT_BASE},
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               a.nombre as area_nombre
        FROM mesas m
@@ -215,7 +240,7 @@ export const actualizarMesa = async (req, res) => {
   try {
     const { id } = req.params;
     const {
-      numero_mesa, capacidad_sillas, tipo_precio_id, activo,
+      numero_mesa, codigo_mesa, capacidad_sillas, tipo_precio_id, activo,
       posicion_x, posicion_y, ancho, alto, area_id,
       precio_mesa_completa, precio_silla_individual, venta_solo_mesa
     } = req.body;
@@ -254,6 +279,26 @@ export const actualizarMesa = async (req, res) => {
       }
       campos.push('numero_mesa = ?');
       valores.push(numero_mesa);
+    }
+    if (codigo_mesa !== undefined) {
+      const codigo =
+        codigo_mesa != null && String(codigo_mesa).trim() !== ''
+          ? String(codigo_mesa).trim().toUpperCase()
+          : null;
+      if (codigo) {
+        const [dupCodigo] = await pool.execute(
+          'SELECT id FROM mesas WHERE evento_id = ? AND codigo_mesa = ? AND id != ?',
+          [eventoId, codigo, id]
+        );
+        if (dupCodigo.length > 0) {
+          return res.status(400).json({
+            success: false,
+            message: `Ya existe una mesa con el código ${codigo} en este evento`
+          });
+        }
+      }
+      campos.push('codigo_mesa = ?');
+      valores.push(codigo);
     }
     if (capacidad_sillas !== undefined) {
       if (isNaN(capacidad_sillas) || capacidad_sillas < 1) {
@@ -349,9 +394,7 @@ export const actualizarMesa = async (req, res) => {
 
     // Obtener la mesa actualizada
     const [mesas] = await pool.execute(
-      `SELECT m.id, m.evento_id, m.numero_mesa, m.capacidad_sillas, m.tipo_precio_id, 
-              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id,
-              ${MESA_PRECIOS_SQL}, m.created_at, m.updated_at,
+      `SELECT ${MESA_SELECT_BASE},
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               a.nombre as area_nombre
        FROM mesas m

@@ -14,7 +14,8 @@ const escanearPorCodigo = async (codigoEscaneo, usuarioId) => {
     const [asientos] = await connection.execute(
       `SELECT 
         ca.*, 
-        a.numero_asiento, 
+        a.numero_asiento,
+        a.codigo_asiento, 
         a.mesa_id, 
         m.numero_mesa, 
         tp.nombre as tipo_precio_nombre,
@@ -466,6 +467,7 @@ export const obtenerReporteEscaneos = async (req, res) => {
         ca.fecha_escaneo,
         ca.codigo_escaneo,
         a.numero_asiento,
+        a.codigo_asiento,
         a.mesa_id,
         m.numero_mesa,
         tp.nombre as tipo_precio_nombre,
@@ -562,6 +564,7 @@ export const obtenerEntradasPendientes = async (req, res) => {
       `SELECT 
         ca.id,
         a.numero_asiento,
+        a.codigo_asiento,
         a.mesa_id,
         m.numero_mesa,
         tp.nombre as tipo_precio_nombre,

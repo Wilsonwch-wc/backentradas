@@ -40,6 +40,12 @@ const MIGRATIONS = [
     column: 'ubicacion_url',
     sql: `ALTER TABLE eventos ADD COLUMN ubicacion_url VARCHAR(500) DEFAULT NULL COMMENT 'URL mapa (Google Maps, Waze, etc.)'`,
   },
+  // --- mesas: código visible (A1, B15, E25…) ---
+  {
+    table: 'mesas',
+    column: 'codigo_mesa',
+    sql: `ALTER TABLE mesas ADD COLUMN codigo_mesa VARCHAR(20) DEFAULT NULL COMMENT 'Etiqueta en plano: A1, A3, B15, etc.'`,
+  },
 ];
 
 async function columnExists(conn, table, column) {
@@ -54,7 +60,7 @@ async function columnExists(conn, table, column) {
 async function main() {
   const conn = await pool.getConnection();
   try {
-    console.log('Migración servidor: mesas (precios) + eventos (ubicación)\n');
+    console.log('Migración servidor: mesas (precios, código) + eventos (ubicación)\n');
 
     for (const { table, column, sql } of MIGRATIONS) {
       if (await columnExists(conn, table, column)) {

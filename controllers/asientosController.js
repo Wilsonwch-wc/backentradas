@@ -6,7 +6,7 @@ export const obtenerAsientosPorEvento = async (req, res) => {
     const { eventoId } = req.params;
 
     const [asientos] = await pool.execute(
-      `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, 
+      `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, 
               a.estado, a.posicion_x, a.posicion_y, a.area_id, a.created_at, a.updated_at,
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               m.numero_mesa, m.capacidad_sillas,
@@ -40,7 +40,7 @@ export const obtenerAsientosDisponibles = async (req, res) => {
     const { eventoId } = req.params;
     const { tipo_precio_id, mesa_id } = req.query;
 
-    let query = `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, 
+    let query = `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, 
                         a.estado, a.created_at, a.updated_at,
                         tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
                         m.numero_mesa, m.capacidad_sillas
@@ -85,7 +85,7 @@ export const obtenerAsientoPorId = async (req, res) => {
     const { id } = req.params;
 
     const [asientos] = await pool.execute(
-      `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, 
+      `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, 
               a.estado, a.posicion_x, a.posicion_y, a.created_at, a.updated_at,
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               m.numero_mesa, m.capacidad_sillas
@@ -120,7 +120,7 @@ export const obtenerAsientoPorId = async (req, res) => {
 // Crear un nuevo asiento
 export const crearAsiento = async (req, res) => {
   try {
-    const { evento_id, mesa_id, numero_asiento, tipo_precio_id, area_id, posicion_x, posicion_y } = req.body;
+    const { evento_id, mesa_id, numero_asiento, codigo_asiento, tipo_precio_id, area_id, posicion_x, posicion_y } = req.body;
 
     // Validaciones
     if (!evento_id || !numero_asiento || !tipo_precio_id) {
@@ -231,14 +231,14 @@ export const crearAsiento = async (req, res) => {
     const mesaIdFinal = (mesa_id !== null && mesa_id !== undefined && mesa_id !== 0 && mesa_id !== '0') ? mesa_id : null;
     
     const [result] = await pool.execute(
-      `INSERT INTO asientos (evento_id, mesa_id, numero_asiento, tipo_precio_id, estado, area_id, posicion_x, posicion_y)
-       VALUES (?, ?, ?, ?, 'disponible', ?, ?, ?)`,
-      [evento_id, mesaIdFinal, String(numero_asiento), tipo_precio_id, areaIdFinal, posicion_x || null, posicion_y || null]
+      `INSERT INTO asientos (evento_id, mesa_id, numero_asiento, codigo_asiento, tipo_precio_id, estado, area_id, posicion_x, posicion_y)
+       VALUES (?, ?, ?, ?, ?, 'disponible', ?, ?, ?)`,
+      [evento_id, mesaIdFinal, String(numero_asiento), codigo_asiento || null, tipo_precio_id, areaIdFinal, posicion_x || null, posicion_y || null]
     );
 
     // Obtener el asiento creado
     const [asientos] = await pool.execute(
-      `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, 
+      `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, 
               a.estado, a.posicion_x, a.posicion_y, a.area_id, a.created_at, a.updated_at,
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               m.numero_mesa, m.capacidad_sillas,
@@ -532,7 +532,7 @@ export const actualizarAsiento = async (req, res) => {
 
     // Obtener el asiento actualizado
     const [asientos] = await pool.execute(
-      `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.tipo_precio_id, 
+      `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, 
               a.estado, a.posicion_x, a.posicion_y, a.area_id, a.created_at, a.updated_at,
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               m.numero_mesa, m.capacidad_sillas,

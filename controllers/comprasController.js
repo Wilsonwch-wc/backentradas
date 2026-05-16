@@ -523,10 +523,11 @@ export const crearCompra = async (req, res) => {
 
       // Obtener asientos de la compra con información de mesa, tipo de precio y área
       const [asientosCompra] = await connection.execute(
-        `SELECT 
-          ca.*, 
-          a.numero_asiento, 
-          a.area_id,
+          `SELECT 
+            ca.*, 
+            a.numero_asiento, 
+            a.codigo_asiento,
+            a.area_id,
           a.mesa_id,
           m.numero_mesa,
           tp.nombre as tipo_precio_nombre,
@@ -618,6 +619,7 @@ export const obtenerCompraPorCodigo = async (req, res) => {
       `SELECT 
         ca.*, 
         a.numero_asiento, 
+        a.codigo_asiento,
         a.area_id,
         a.mesa_id,
         m.numero_mesa,
@@ -809,8 +811,11 @@ export const buscarEntradaPorCodigo = async (req, res) => {
         `SELECT 
           ca.*, 
           a.numero_asiento, 
+          a.codigo_asiento,
           a.mesa_id, 
-          m.numero_mesa, 
+          m.numero_mesa,
+          m.codigo_mesa,
+          ar.nombre as area_nombre,
           tp.nombre as tipo_precio_nombre,
           c.id as compra_id,
           c.codigo_unico,
@@ -823,6 +828,7 @@ export const buscarEntradaPorCodigo = async (req, res) => {
          INNER JOIN eventos e ON c.evento_id = e.id
          LEFT JOIN mesas m ON a.mesa_id = m.id
          LEFT JOIN tipos_precio_evento tp ON a.tipo_precio_id = tp.id
+         LEFT JOIN areas_layout ar ON a.area_id = ar.id
          WHERE ca.codigo_escaneo = ? AND ca.estado = 'CONFIRMADO'`,
         [codigo]
       );
@@ -840,8 +846,10 @@ export const buscarEntradaPorCodigo = async (req, res) => {
         yaEscaneada = asiento.escaneado ? true : false;
         entradaEscaneada = {
           tipo: 'ASIENTO',
-          numero_asiento: asiento.numero_asiento,
+          numero_asiento: asiento.codigo_asiento || asiento.numero_asiento,
           numero_mesa: asiento.numero_mesa,
+          codigo_mesa: asiento.codigo_mesa,
+          area_nombre: asiento.area_nombre || null,
           tipo_precio: asiento.tipo_precio_nombre,
           codigo_escaneo: codigo,
           fecha_escaneo: asiento.fecha_escaneo,
@@ -1001,6 +1009,7 @@ export const tickearEntrada = async (req, res) => {
           `SELECT 
             ca.*,
             a.numero_asiento,
+            a.codigo_asiento,
             a.mesa_id,
             m.numero_mesa,
             m.capacidad_sillas,
@@ -1453,6 +1462,7 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
         ca.fecha_escaneo,
         ca.usuario_escaneo_id,
         a.numero_asiento,
+        a.codigo_asiento,
         a.mesa_id,
         m.numero_mesa,
         tp.nombre as tipo_precio_nombre,
@@ -2072,11 +2082,13 @@ export const obtenerMisCompras = async (req, res) => {
       const [asientos] = await pool.execute(
         `SELECT 
           ca.*, 
-          a.numero_asiento, 
-          a.mesa_id,
-          m.numero_mesa,
-          tp.nombre as tipo_precio_nombre,
-          ar.nombre as area_nombre
+        a.numero_asiento,
+        a.codigo_asiento,
+        a.area_id,
+        a.mesa_id,
+        m.numero_mesa,
+        tp.nombre as tipo_precio_nombre,
+        ar.nombre as area_nombre
          FROM compras_asientos ca
          INNER JOIN asientos a ON ca.asiento_id = a.id
          LEFT JOIN mesas m ON a.mesa_id = m.id
@@ -2359,6 +2371,7 @@ export const confirmarPago = async (req, res) => {
           `SELECT 
             ca.*, 
             a.numero_asiento, 
+          a.codigo_asiento,
             a.area_id,
             a.mesa_id,
             m.numero_mesa,
@@ -2609,6 +2622,7 @@ export const reenviarBoleto = async (req, res) => {
       SELECT 
         ca.*,
         a.numero_asiento,
+        a.codigo_asiento,
         a.area_id,
         a.mesa_id,
         m.numero_mesa,
@@ -2660,7 +2674,7 @@ export const reenviarBoleto = async (req, res) => {
     const asientosParaMensaje = [
       ...asientos.map(a => ({
         type: 'asiento',
-        nombre: `Asiento ${a.numero_asiento}`
+        nombre: `Asiento ${a.codigo_asiento || a.numero_asiento}`
       })),
       ...mesas.map(m => ({
         type: 'mesa_completa',
@@ -2729,6 +2743,7 @@ export const obtenerPDFBoleto = async (req, res) => {
       SELECT 
         ca.*,
         a.numero_asiento,
+        a.codigo_asiento,
         a.area_id,
         a.mesa_id,
         m.numero_mesa,
@@ -2873,6 +2888,7 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
       SELECT 
         ca.*,
         a.numero_asiento,
+        a.codigo_asiento,
         a.area_id,
         a.mesa_id,
         m.numero_mesa,
@@ -3179,6 +3195,7 @@ export const enviarBoletoPorEmail = async (req, res) => {
       SELECT 
         ca.*,
         a.numero_asiento,
+        a.codigo_asiento,
         a.area_id,
         a.mesa_id,
         m.numero_mesa,
