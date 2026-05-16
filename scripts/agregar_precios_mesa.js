@@ -1,13 +1,45 @@
 /**
- * Agrega columnas de precios por mesa (idempotente).
+ * Migración idempotente para el servidor:
+ * - Precios por mesa (tabla mesas)
+ * - Ubicación del evento (tabla eventos)
+ *
  * Uso: node scripts/agregar_precios_mesa.js
  */
 import pool from '../config/db.js';
 
-const ALTERS = [
-  `ALTER TABLE mesas ADD COLUMN precio_mesa_completa DECIMAL(10,2) DEFAULT NULL COMMENT 'Precio fijo al vender la mesa entera'`,
-  `ALTER TABLE mesas ADD COLUMN precio_silla_individual DECIMAL(10,2) DEFAULT NULL COMMENT 'Precio por silla suelta si la mesa no es solo paquete'`,
-  `ALTER TABLE mesas ADD COLUMN venta_solo_mesa TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1=solo mesa completa, no sillas sueltas'`,
+const MIGRATIONS = [
+  // --- mesas: precios ---
+  {
+    table: 'mesas',
+    column: 'precio_mesa_completa',
+    sql: `ALTER TABLE mesas ADD COLUMN precio_mesa_completa DECIMAL(10,2) DEFAULT NULL COMMENT 'Precio fijo al vender la mesa entera'`,
+  },
+  {
+    table: 'mesas',
+    column: 'precio_silla_individual',
+    sql: `ALTER TABLE mesas ADD COLUMN precio_silla_individual DECIMAL(10,2) DEFAULT NULL COMMENT 'Precio por silla suelta si la mesa no es solo paquete'`,
+  },
+  {
+    table: 'mesas',
+    column: 'venta_solo_mesa',
+    sql: `ALTER TABLE mesas ADD COLUMN venta_solo_mesa TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1=solo mesa completa, no sillas sueltas'`,
+  },
+  // --- eventos: ubicación (Cartelera) ---
+  {
+    table: 'eventos',
+    column: 'ubicacion',
+    sql: `ALTER TABLE eventos ADD COLUMN ubicacion VARCHAR(255) DEFAULT NULL COMMENT 'Lugar o dirección del evento'`,
+  },
+  {
+    table: 'eventos',
+    column: 'ciudad',
+    sql: `ALTER TABLE eventos ADD COLUMN ciudad VARCHAR(100) DEFAULT NULL COMMENT 'Ciudad del evento'`,
+  },
+  {
+    table: 'eventos',
+    column: 'ubicacion_url',
+    sql: `ALTER TABLE eventos ADD COLUMN ubicacion_url VARCHAR(500) DEFAULT NULL COMMENT 'URL mapa (Google Maps, Waze, etc.)'`,
+  },
 ];
 
 async function columnExists(conn, table, column) {
@@ -22,16 +54,17 @@ async function columnExists(conn, table, column) {
 async function main() {
   const conn = await pool.getConnection();
   try {
-    console.log('Migración: precios por mesa en tabla mesas\n');
-    for (const sql of ALTERS) {
-      const col = sql.match(/ADD COLUMN (\w+)/i)?.[1];
-      if (col && (await columnExists(conn, 'mesas', col))) {
-        console.log(`  [OK] ${col} ya existe`);
+    console.log('Migración servidor: mesas (precios) + eventos (ubicación)\n');
+
+    for (const { table, column, sql } of MIGRATIONS) {
+      if (await columnExists(conn, table, column)) {
+        console.log(`  [OK] ${table}.${column} ya existe`);
         continue;
       }
       await conn.execute(sql);
-      console.log(`  [+] ${col || 'columna'} agregada`);
+      console.log(`  [+] ${table}.${column} agregada`);
     }
+
     console.log('\nListo.');
   } catch (e) {
     console.error('Error:', e.message);
