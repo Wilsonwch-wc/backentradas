@@ -39,7 +39,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 import rateLimit from 'express-rate-limit';
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 10000, // Aumentado para soportar el guardado masivo de asientos y mesas en layouts grandes
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Demasiadas peticiones. Intenta de nuevo en 15 minutos.' }
