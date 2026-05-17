@@ -329,6 +329,30 @@ export const eliminarTipoPrecio = async (req, res) => {
       });
     }
 
+    // Verificar si hay mesas que referencian este tipo de precio
+    const [mesasRef] = await pool.execute(
+      'SELECT COUNT(*) as total FROM mesas WHERE tipo_precio_id = ?',
+      [id]
+    );
+    if (mesasRef[0].total > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se puede eliminar: hay mesas que usan este tipo de precio'
+      });
+    }
+
+    // Verificar si hay compras o detalles de pago asociados a este tipo de precio
+    const [comprasRef] = await pool.execute(
+      'SELECT COUNT(*) as total FROM compras_detalle_general WHERE tipo_precio_id = ?',
+      [id]
+    );
+    if (comprasRef[0].total > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No se puede eliminar: existen compras o reservas registradas para este tipo de precio'
+      });
+    }
+
     // Eliminar el tipo de precio (seguro, sin referencias)
     await pool.execute('DELETE FROM tipos_precio_evento WHERE id = ?', [id]);
 
