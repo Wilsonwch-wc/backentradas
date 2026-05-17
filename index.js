@@ -31,6 +31,7 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', 1); // Confiar en Nginx/proxy reverso (fix X-Forwarded-For)
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
 
@@ -138,22 +139,23 @@ const expirarComprasPendientes = async () => {
       }
 
       const ids = pendientes.map(p => p.id);
+      const ph = ids.map(() => '?').join(','); // fix: execute() no expande arrays en IN
 
       await connection.execute(
-        `UPDATE compras SET estado = 'CANCELADO' WHERE id IN (?) AND estado = 'PAGO_PENDIENTE'`,
-        [ids]
+        `UPDATE compras SET estado = 'CANCELADO' WHERE id IN (${ph}) AND estado = 'PAGO_PENDIENTE'`,
+        ids
       );
       await connection.execute(
-        `UPDATE compras_asientos SET estado = 'CANCELADO' WHERE compra_id IN (?)`,
-        [ids]
+        `UPDATE compras_asientos SET estado = 'CANCELADO' WHERE compra_id IN (${ph})`,
+        ids
       );
       await connection.execute(
-        `UPDATE compras_mesas SET estado = 'CANCELADO' WHERE compra_id IN (?)`,
-        [ids]
+        `UPDATE compras_mesas SET estado = 'CANCELADO' WHERE compra_id IN (${ph})`,
+        ids
       );
       await connection.execute(
-        `UPDATE compras_areas_personas SET estado = 'CANCELADO' WHERE compra_id IN (?)`,
-        [ids]
+        `UPDATE compras_areas_personas SET estado = 'CANCELADO' WHERE compra_id IN (${ph})`,
+        ids
       );
 
       await connection.commit();
