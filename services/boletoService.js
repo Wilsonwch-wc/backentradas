@@ -93,6 +93,101 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     
     doc.image(qrImageBuffer, qrX, yPos, {
       width: qrSize,
+import PDFDocument from 'pdfkit';
+import QRCode from 'qrcode';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Función de soporte de boletos
+
+/**
+ * Genera un boleto individual en formato ticket térmico (80mm de ancho)
+ */
+const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entradaGeneral, index, total, precio) => {
+  // Dimensiones para ticket térmico 80mm (aproximadamente 226 puntos a 72 DPI)
+  const ticketWidth = doc.page.width || 226.77; // 80mm en puntos
+  const margin = 10;
+  const contentWidth = ticketWidth - (margin * 2);
+  
+  let yPos = margin;
+
+  // 1. TÍTULO DEL EVENTO (arriba, centrado)
+  const eventoNombre = (evento.titulo || 'Evento').toUpperCase();
+  doc.fontSize(11)
+     .font('Helvetica-Bold')
+     .fillColor('#000000')
+     .text(eventoNombre, margin, yPos, {
+       width: contentWidth,
+       align: 'center'
+     });
+
+  yPos += 14;
+
+  // 2. FECHA Y HORA (debajo del título, centrado)
+  const fechaEvento = evento.hora_inicio 
+    ? new Date(evento.hora_inicio).toLocaleDateString('es-ES', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).replace(/\//g, '-')
+    : 'Fecha no disponible';
+  
+  const horaEvento = evento.hora_inicio
+    ? new Date(evento.hora_inicio).toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      })
+    : 'Hora no disponible';
+
+  const fechaHora = `${fechaEvento} - ${horaEvento}`;
+  doc.fontSize(8)
+     .font('Helvetica')
+     .fillColor('#000000')
+     .text(fechaHora, margin, yPos, {
+       width: contentWidth,
+       align: 'center'
+     });
+
+  yPos += 12;
+
+  // 3. QR CODE (en el medio, centrado)
+  const qrSize = 80; // Tamaño del QR
+  const qrX = (ticketWidth - qrSize) / 2; // Centrar el QR
+  
+  // Código de escaneo para el QR
+  const codigoEscaneo = (asiento && asiento.codigo_escaneo) 
+    ? asiento.codigo_escaneo 
+    : (mesa && mesa.codigo_escaneo) 
+      ? mesa.codigo_escaneo 
+      : (entradaGeneral && entradaGeneral.codigo_escaneo) 
+        ? entradaGeneral.codigo_escaneo 
+        : null;
+
+  // Generar QR Code
+  try {
+    const qrData = codigoEscaneo || JSON.stringify({
+      codigo: compra.codigo_unico,
+      compra_id: compra.id,
+      evento_id: evento.id,
+      asiento_id: asiento?.id || mesa?.id || null,
+      timestamp: Date.now(),
+      index: index
+    });
+
+    const qrImageBuffer = await QRCode.toBuffer(qrData, {
+      errorCorrectionLevel: 'H',
+      type: 'png',
+      width: qrSize,
+      margin: 1
+    });
+    
+    doc.image(qrImageBuffer, qrX, yPos, {
+      width: qrSize,
       height: qrSize
     });
   } catch (qrError) {
@@ -107,7 +202,13 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
   if (asiento && asiento.tipo_precio_nombre) {
     tipoBoleto = asiento.tipo_precio_nombre.toUpperCase();
   } else if (mesa) {
-    tipoBoleto = 'MESA';
+    if (mesa.area_nombre) {
+      tipoBoleto = mesa.area_nombre.toUpperCase();
+    } else if (mesa.tipo_precio_nombre) {
+      tipoBoleto = mesa.tipo_precio_nombre.toUpperCase();
+    } else {
+      tipoBoleto = 'MESA';
+    }
   } else if (entradaGeneral && entradaGeneral.tipo_precio_nombre) {
     tipoBoleto = entradaGeneral.tipo_precio_nombre.toUpperCase();
   } else if (entradaGeneral && entradaGeneral.area_nombre) {
@@ -156,7 +257,7 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     yPos += 16;
   }
 
-  // Asiento (si aplica)
+  // Asiento o Mesa (si aplica)
   if (asiento && (asiento.numero_asiento || asiento.codigo_asiento)) {
     const asientoLabel = asiento.codigo_asiento || asiento.numero_asiento;
     let asientoTexto = `Asiento: ${asientoLabel}`;
@@ -175,7 +276,10 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
        });
     yPos += 10;
   } else if (mesa && mesa.numero_mesa) {
-    const mesaTexto = `Mesa: M${mesa.numero_mesa}`;
+    let mesaTexto = `Mesa: M${mesa.numero_mesa}`;
+    if (mesa.area_nombre) {
+      mesaTexto = `Mesa: ${mesa.area_nombre} - M${mesa.numero_mesa}`;
+    }
     doc.fontSize(8)
        .font('Helvetica')
        .fillColor('#000000')
@@ -245,7 +349,6 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
   });
 
   let yPos = margin;
-
   // Encabezado - RECIBO (sin valor fiscal)
   doc.fontSize(10)
      .font('Helvetica-Bold')

@@ -7,7 +7,13 @@ const buildDetalleCompraEspecial = (asientos = [], mesas = [], areasPersonas = [
   if (mesas.length > 0) {
     const totalSillasMesas = mesas.reduce((acc, mesa) => acc + (mesa.cantidad_sillas || 0), 0);
     const mesasLista = mesas
-      .map((mesa) => `M${mesa.numero_mesa || mesa.mesa_id || mesa.id || ''}`)
+      .map((mesa) => {
+        const mesaNum = mesa.numero_mesa || mesa.mesa_id || mesa.id || '';
+        if (mesa.area_nombre) {
+          return `${mesa.area_nombre} - M${mesaNum}`;
+        }
+        return `M${mesaNum}`;
+      })
       .join(', ');
     partes.push(
       `${mesas.length > 1 ? 'Mesas' : 'Mesa'} ${mesasLista} (${totalSillasMesas} ${totalSillasMesas === 1 ? 'silla' : 'sillas'})`
@@ -17,8 +23,9 @@ const buildDetalleCompraEspecial = (asientos = [], mesas = [], areasPersonas = [
   if (asientos.length > 0) {
     const asientosLista = asientos
       .map((asiento) => {
+        const areaLabel = asiento.area_nombre ? `${asiento.area_nombre} - ` : '';
         const mesaLabel = asiento.numero_mesa || asiento.mesa_id ? `M${asiento.numero_mesa || asiento.mesa_id}-` : '';
-        return `${mesaLabel}S${asiento.numero_asiento || asiento.asiento_id || asiento.id || ''}`;
+        return `${areaLabel}${mesaLabel}S${asiento.numero_asiento || asiento.asiento_id || asiento.id || ''}`;
       })
       .join(', ');
     partes.push(`Sillas: ${asientosLista}`);
@@ -138,10 +145,12 @@ export const obtenerReportePorEvento = async (req, res) => {
             a.numero_asiento,
             a.mesa_id,
             a.area_id,
-            m.numero_mesa
+            m.numero_mesa,
+            ar.nombre as area_nombre
           FROM compras_asientos ca
           INNER JOIN asientos a ON ca.asiento_id = a.id
           LEFT JOIN mesas m ON a.mesa_id = m.id
+          LEFT JOIN areas_layout ar ON a.area_id = ar.id
           WHERE ca.compra_id IN (?)
           ORDER BY m.numero_mesa, a.numero_asiento
         `,
@@ -157,9 +166,13 @@ export const obtenerReportePorEvento = async (req, res) => {
             cm.cantidad_sillas,
             cm.precio_total,
             cm.mesa_id,
-            m.numero_mesa
+            m.numero_mesa,
+            ar.nombre as area_nombre,
+            tp.nombre as tipo_precio_nombre
           FROM compras_mesas cm
           INNER JOIN mesas m ON cm.mesa_id = m.id
+          LEFT JOIN areas_layout ar ON m.area_id = ar.id
+          LEFT JOIN tipos_precio_evento tp ON m.tipo_precio_id = tp.id
           WHERE cm.compra_id IN (?)
           ORDER BY m.numero_mesa
         `,
@@ -382,47 +395,146 @@ export const exportarReporte = async (req, res) => {
       [evento_id]
     );
 
-    // Detalle por tipo (VIP, General, etc.) para evento general en la exportación
+    // Detalle por tipo (VIP, General, etc.) para la exportación
     const compraIdsExport = compras.map((c) => c.id);
     let detalleGeneralPorCompraExport = {};
-    if (evento.tipo_evento === 'general' && compraIdsExport.length > 0) {
-      try {
-        const [filasDetalleExp] = await pool.query(
-          `SELECT cdg.compra_id, tp.nombre AS tipo_nombre, cdg.cantidad
-           FROM compras_detalle_general cdg
-           INNER JOIN tipos_precio_evento tp ON cdg.tipo_precio_id = tp.id
-           WHERE cdg.compra_id IN (?)`,
-          [compraIdsExport]
-        );
-        for (const f of filasDetalleExp) {
-          if (!detalleGeneralPorCompraExport[f.compra_id]) detalleGeneralPorCompraExport[f.compra_id] = [];
-          detalleGeneralPorCompraExport[f.compra_id].push({ tipo_nombre: f.tipo_nombre, cantidad: f.cantidad });
-        }
-        const [entradasPorTipoExp] = await pool.query(
-          `SELECT eg.compra_id, tp.nombre AS tipo_nombre, COUNT(*) AS cantidad
-           FROM compras_entradas_generales eg
-           INNER JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
-           WHERE eg.compra_id IN (?)
-           GROUP BY eg.compra_id, tp.id, tp.nombre`,
-          [compraIdsExport]
-        );
-        for (const f of entradasPorTipoExp) {
-          if (!detalleGeneralPorCompraExport[f.compra_id]) detalleGeneralPorCompraExport[f.compra_id] = [];
-          const exist = detalleGeneralPorCompraExport[f.compra_id].find((x) => x.tipo_nombre === f.tipo_nombre);
-          if (!exist) detalleGeneralPorCompraExport[f.compra_id].push({ tipo_nombre: f.tipo_nombre, cantidad: f.cantidad });
-        }
-      } catch (_) {}
+    let asientosExport = [];
+    let mesasExport = [];
+    let areasPersonasExport = [];
+
+    if (compraIdsExport.length > 0) {
+      if (evento.tipo_evento === 'general') {
+        try {
+          const [filasDetalleExp] = await pool.query(
+            `SELECT cdg.compra_id, tp.nombre AS tipo_nombre, cdg.cantidad
+             FROM compras_detalle_general cdg
+             INNER JOIN tipos_precio_evento tp ON cdg.tipo_precio_id = tp.id
+             WHERE cdg.compra_id IN (?)`,
+            [compraIdsExport]
+          );
+          for (const f of filasDetalleExp) {
+            if (!detalleGeneralPorCompraExport[f.compra_id]) detalleGeneralPorCompraExport[f.compra_id] = [];
+            detalleGeneralPorCompraExport[f.compra_id].push({ tipo_nombre: f.tipo_nombre, cantidad: f.cantidad });
+          }
+          const [entradasPorTipoExp] = await pool.query(
+            `SELECT eg.compra_id, tp.nombre AS tipo_nombre, COUNT(*) AS cantidad
+             FROM compras_entradas_generales eg
+             INNER JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
+             WHERE eg.compra_id IN (?)
+             GROUP BY eg.compra_id, tp.id, tp.nombre`,
+            [compraIdsExport]
+          );
+          for (const f of entradasPorTipoExp) {
+            if (!detalleGeneralPorCompraExport[f.compra_id]) detalleGeneralPorCompraExport[f.compra_id] = [];
+            const exist = detalleGeneralPorCompraExport[f.compra_id].find((x) => x.tipo_nombre === f.tipo_nombre);
+            if (!exist) detalleGeneralPorCompraExport[f.compra_id].push({ tipo_nombre: f.tipo_nombre, cantidad: f.cantidad });
+          }
+        } catch (_) {}
+      } else {
+        // Evento especial
+        try {
+          [asientosExport] = await pool.query(
+            `
+              SELECT 
+                ca.id,
+                ca.compra_id,
+                ca.estado,
+                ca.precio,
+                a.id AS asiento_id,
+                a.numero_asiento,
+                a.mesa_id,
+                a.area_id,
+                m.numero_mesa,
+                ar.nombre as area_nombre
+              FROM compras_asientos ca
+              INNER JOIN asientos a ON ca.asiento_id = a.id
+              LEFT JOIN mesas m ON a.mesa_id = m.id
+              LEFT JOIN areas_layout ar ON a.area_id = ar.id
+              WHERE ca.compra_id IN (?)
+              ORDER BY m.numero_mesa, a.numero_asiento
+            `,
+            [compraIdsExport]
+          );
+
+          [mesasExport] = await pool.query(
+            `
+              SELECT 
+                cm.id,
+                cm.compra_id,
+                cm.estado,
+                cm.cantidad_sillas,
+                cm.precio_total,
+                cm.mesa_id,
+                m.numero_mesa,
+                ar.nombre as area_nombre,
+                tp.nombre as tipo_precio_nombre
+              FROM compras_mesas cm
+              INNER JOIN mesas m ON cm.mesa_id = m.id
+              LEFT JOIN areas_layout ar ON m.area_id = ar.id
+              LEFT JOIN tipos_precio_evento tp ON m.tipo_precio_id = tp.id
+              WHERE cm.compra_id IN (?)
+              ORDER BY m.numero_mesa
+            `,
+            [compraIdsExport]
+          );
+
+          [areasPersonasExport] = await pool.query(
+            `SELECT cap.id, cap.compra_id, cap.area_id, cap.cantidad, cap.precio_unitario, cap.precio_total, cap.estado,
+                    ar.nombre as area_nombre
+             FROM compras_areas_personas cap
+             INNER JOIN areas_layout ar ON cap.area_id = ar.id
+             WHERE cap.compra_id IN (?)
+             ORDER BY ar.nombre`,
+            [compraIdsExport]
+          );
+        } catch (_) {}
+      }
     }
+
+    const asientosPorCompraExport = asientosExport.reduce((acc, asiento) => {
+      if (!acc[asiento.compra_id]) acc[asiento.compra_id] = [];
+      acc[asiento.compra_id].push(asiento);
+      return acc;
+    }, {});
+
+    const mesasPorCompraExport = mesasExport.reduce((acc, mesa) => {
+      if (!acc[mesa.compra_id]) acc[mesa.compra_id] = [];
+      acc[mesa.compra_id].push(mesa);
+      return acc;
+    }, {});
+
+    const areasPersonasPorCompraExport = areasPersonasExport.reduce((acc, ap) => {
+      if (!acc[ap.compra_id]) acc[ap.compra_id] = [];
+      acc[ap.compra_id].push(ap);
+      return acc;
+    }, {});
+
     const comprasConDetalleExport = compras.map((c) => {
-      const detallePorTipo = detalleGeneralPorCompraExport[c.id];
-      const detalleCompraGeneral =
-        detallePorTipo && detallePorTipo.length > 0
-          ? detallePorTipo.map((d) => `${d.cantidad} ${d.tipo_nombre}`).join(', ')
-          : `${c.cantidad || 0} entrada(s) general`;
-      return {
-        ...c,
-        detalle_compra: evento.tipo_evento === 'general' ? detalleCompraGeneral : null
-      };
+      if (evento.tipo_evento === 'general') {
+        const detallePorTipo = detalleGeneralPorCompraExport[c.id];
+        const detalleCompraGeneral =
+          detallePorTipo && detallePorTipo.length > 0
+            ? detallePorTipo.map((d) => `${d.cantidad} ${d.tipo_nombre}`).join(', ')
+            : `${c.cantidad || 0} entrada(s) general`;
+        return {
+          ...c,
+          detalle_compra: detalleCompraGeneral
+        };
+      } else {
+        const detalleAsientos = asientosPorCompraExport[c.id] || [];
+        const detalleMesas = mesasPorCompraExport[c.id] || [];
+        const detalleAreasPersonas = areasPersonasPorCompraExport[c.id] || [];
+        const totalEntradasEspecial =
+          detalleAsientos.length +
+          detalleMesas.reduce((acc, mesa) => acc + (mesa.cantidad_sillas || 0), 0) +
+          detalleAreasPersonas.reduce((acc, ap) => acc + (ap.cantidad || 0), 0);
+        const totalEntradas = totalEntradasEspecial || c.cantidad;
+
+        return {
+          ...c,
+          detalle_compra: buildDetalleCompraEspecial(detalleAsientos, detalleMesas, detalleAreasPersonas, totalEntradas)
+        };
+      }
     });
 
     // Calcular resumen por tipo de pago para la exportación
