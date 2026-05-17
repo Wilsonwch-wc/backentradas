@@ -181,9 +181,9 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
        });
     yPos += 10;
   } else if (mesa && mesa.numero_mesa) {
-    let mesaTexto = `Mesa: M${mesa.numero_mesa} (Mesa para 10 personas)`;
+    let mesaTexto = `Mesa: ${mesa.numero_mesa} (Mesa para 10 personas)`;
     if (mesa.area_nombre) {
-      mesaTexto = `Mesa: ${mesa.area_nombre} - M${mesa.numero_mesa} (Mesa para 10 personas)`;
+      mesaTexto = `Mesa: ${mesa.area_nombre} - ${mesa.numero_mesa} (Mesa para 10 personas)`;
     }
     doc.fontSize(8)
        .font('Helvetica')
