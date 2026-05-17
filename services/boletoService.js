@@ -181,9 +181,9 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
        });
     yPos += 10;
   } else if (mesa && mesa.numero_mesa) {
-    let mesaTexto = `Mesa: M${mesa.numero_mesa}`;
+    let mesaTexto = `Mesa: M${mesa.numero_mesa} (Mesa para 10 personas)`;
     if (mesa.area_nombre) {
-      mesaTexto = `Mesa: ${mesa.area_nombre} - M${mesa.numero_mesa}`;
+      mesaTexto = `Mesa: ${mesa.area_nombre} - M${mesa.numero_mesa} (Mesa para 10 personas)`;
     }
     doc.fontSize(8)
        .font('Helvetica')
@@ -407,7 +407,7 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
       totalItems += subtotal;
 
       const itemText = `${evento.titulo || 'Evento'}`;
-      const detalleText = `Mesa ${mesa.numero_mesa} ${cantidad} X ${precioUnitario.toFixed(2)}`;
+      const detalleText = `Mesa ${mesa.numero_mesa} (Mesa para 10 personas)`;
       
       doc.fontSize(7)
          .font('Helvetica')
@@ -668,7 +668,7 @@ export const generarBoletoPDF = async (compra, evento, asientos = [], mesas = []
           currentY = 0;
         }
         const index = asientos.length + i;
-        const precio = parseFloat(mesas[i].precio_total || 0) / (mesas[i].cantidad_sillas || 1);
+        const precio = parseFloat(mesas[i].precio_total || 0);
         const alturaUsada = await generarBoletoIndividual(doc, compra, evento, null, mesas[i], null, index, totalEntradas, precio);
         currentY = alturaUsada;
         ticketIndex++;
