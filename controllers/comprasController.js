@@ -854,7 +854,7 @@ export const buscarEntradaPorCodigo = async (req, res) => {
         const [mesas] = await connection.execute(
           `SELECT 
             cm.*, 
-            m.numero_mesa,
+            m.numero_mesa, m.codigo_mesa,
             c.id as compra_id,
             c.codigo_unico,
             c.cliente_nombre,
@@ -1003,7 +1003,7 @@ export const tickearEntrada = async (req, res) => {
             ca.*,
             a.numero_asiento,
             a.mesa_id,
-            m.numero_mesa,
+            m.numero_mesa, m.codigo_mesa,
             m.capacidad_sillas,
             tp.nombre as tipo_precio_nombre
            FROM compras_asientos ca
@@ -1093,7 +1093,7 @@ export const tickearEntrada = async (req, res) => {
         const [mesas] = await connection.execute(
           `SELECT 
             cm.*,
-            m.numero_mesa,
+            m.numero_mesa, m.codigo_mesa,
             m.capacidad_sillas
            FROM compras_mesas cm
            INNER JOIN mesas m ON cm.mesa_id = m.id
@@ -1478,7 +1478,7 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
         cm.codigo_escaneo,
         cm.fecha_escaneo,
         cm.usuario_escaneo_id,
-        m.numero_mesa,
+        m.numero_mesa, m.codigo_mesa,
         cm.cantidad_sillas,
         c.id as compra_id,
         c.codigo_unico,
@@ -2627,7 +2627,7 @@ export const reenviarBoleto = async (req, res) => {
       const [mesas] = await pool.execute(`
       SELECT 
         cm.*,
-        m.numero_mesa,
+        m.numero_mesa, m.codigo_mesa,
         cm.codigo_escaneo,
         ar.nombre as area_nombre,
         tp.nombre as tipo_precio_nombre
@@ -2750,7 +2750,7 @@ export const obtenerPDFBoleto = async (req, res) => {
     const [mesas] = await pool.execute(`
       SELECT 
         cm.*,
-        m.numero_mesa,
+        m.numero_mesa, m.codigo_mesa,
         cm.codigo_escaneo,
         ar.nombre as area_nombre,
         tp.nombre as tipo_precio_nombre
@@ -2897,7 +2897,7 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
       const [mesas] = await pool.execute(`
       SELECT 
         cm.*,
-        m.numero_mesa,
+        m.numero_mesa, m.codigo_mesa,
         cm.codigo_escaneo,
         ar.nombre as area_nombre,
         tp.nombre as tipo_precio_nombre
@@ -3206,7 +3206,7 @@ export const enviarBoletoPorEmail = async (req, res) => {
     const [mesas] = await pool.execute(`
       SELECT 
         cm.*,
-        m.numero_mesa,
+        m.numero_mesa, m.codigo_mesa,
         cm.codigo_escaneo,
         ar.nombre as area_nombre,
         tp.nombre as tipo_precio_nombre
