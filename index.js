@@ -68,52 +68,16 @@ app.use('/images', express.static(path.join(__dirname, 'images')));
 app.use('/uploads/boletos', express.static(path.join(__dirname, 'uploads/boletos')));
 
 // Servir reportes exportados (Excel y PDF)
-app.use('/uploads/reportes', express.static(path.join(__dirname, 'uploads/reportes')));
-
-// Verificar conexión a la base de datos al iniciar
+app.use('/uploads/reportes', express.static(path.join(__dirname, 'uploads/reportes')));// Verificar conexión a la base de datos al iniciar
 const testConnection = async () => {
   try {
     const connection = await db.getConnection();
     console.log('✅ Conexión a la base de datos MySQL establecida correctamente');
     console.log(`📊 Base de datos: ${process.env.DB_NAME || 'entradas_db'}`);
     console.log(`🖥️  Host: ${process.env.DB_HOST || 'localhost'}`);
-
-    // Crear tabla compras_areas_personas si no existe
-    const [tablas] = await connection.query("SHOW TABLES LIKE 'compras_areas_personas'");
-    if (tablas.length === 0) {
-      console.log('🔄 Creando tabla compras_areas_personas...');
-      await connection.query(`
-        CREATE TABLE \`compras_areas_personas\` (
-          \`id\` int NOT NULL AUTO_INCREMENT,
-          \`compra_id\` int NOT NULL,
-          \`area_id\` int NOT NULL,
-          \`cantidad\` int NOT NULL,
-          \`precio_unitario\` decimal(10,2) DEFAULT '0.00',
-          \`precio_total\` decimal(10,2) DEFAULT '0.00',
-          \`estado\` enum('RESERVADO','CONFIRMADO','CANCELADO') COLLATE utf8mb4_unicode_ci DEFAULT 'RESERVADO',
-          \`created_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-          \`updated_at\` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          PRIMARY KEY (\`id\`),
-          KEY \`idx_compra\` (\`compra_id\`),
-          KEY \`idx_area\` (\`area_id\`),
-          CONSTRAINT \`compras_areas_personas_ibfk_area\` FOREIGN KEY (\`area_id\`) REFERENCES \`areas_layout\` (\`id\`) ON DELETE CASCADE,
-          CONSTRAINT \`compras_areas_personas_ibfk_compra\` FOREIGN KEY (\`compra_id\`) REFERENCES \`compras\` (\`id\`) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-      `);
-      console.log('✅ Tabla compras_areas_personas creada con éxito.');
-    }
-    
-    // Asegurar que tipo_area enum tenga PERSONAS
-    try {
-      await connection.query("ALTER TABLE areas_layout MODIFY COLUMN tipo_area ENUM('SILLAS','MESAS','PERSONAS') NOT NULL DEFAULT 'SILLAS'");
-    } catch (e) {
-      console.warn('Advertencia al modificar enum de areas_layout:', e.message);
-    }
-
     connection.release();
   } catch (err) {
-    console.error('❌ Error al conectar con MySQL o ejecutar migraciones:', err.message);
-    console.error('Detalles:', err);
+    console.error('❌ Error al conectar con MySQL:', err.message);
   }
 };
 
@@ -186,10 +150,14 @@ const expirarComprasPendientes = async () => {
         `UPDATE compras_mesas SET estado = 'CANCELADO' WHERE compra_id IN (${ph})`,
         ids
       );
-      await connection.execute(
-        `UPDATE compras_areas_personas SET estado = 'CANCELADO' WHERE compra_id IN (${ph})`,
-        ids
-      );
+      try {
+        await connection.execute(
+          `UPDATE compras_areas_personas SET estado = 'CANCELADO' WHERE compra_id IN (${ph})`,
+          ids
+        );
+      } catch (errExp) {
+        console.warn('Advertencia al expirar compras_areas_personas:', errExp.message);
+      }
 
       await connection.commit();
       connection.release();

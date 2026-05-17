@@ -337,21 +337,27 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
           area.tipo_area = area.tipo_area || 'SILLAS';
           area.forma = area.forma || 'rectangulo';
           if (area.tipo_area === 'PERSONAS' && area.capacidad_personas) {
-            const [reservas] = await pool.execute(
-              `SELECT COALESCE(SUM(cantidad), 0) as total
-               FROM compras_areas_personas cap
-               INNER JOIN compras c ON cap.compra_id = c.id
-               WHERE cap.area_id = ? AND c.estado IN ('PAGO_PENDIENTE', 'PAGO_REALIZADO', 'ENTRADA_USADA')`,
-              [area.id]
-            );
-            area.personas_reservadas = parseInt(reservas[0]?.total || 0, 10);
+            let personas_reservadas = 0;
+            try {
+              const [reservas] = await pool.execute(
+                `SELECT COALESCE(SUM(cantidad), 0) as total
+                 FROM compras_areas_personas cap
+                 INNER JOIN compras c ON cap.compra_id = c.id
+                 WHERE cap.area_id = ? AND c.estado IN ('PAGO_PENDIENTE', 'PAGO_REALIZADO', 'ENTRADA_USADA')`,
+                [area.id]
+              );
+              personas_reservadas = parseInt(reservas[0]?.total || 0, 10);
+            } catch (dbErr) {
+              console.warn(`[ZONA GENERAL] Error al consultar reservas para area_id ${area.id}:`, dbErr.message);
+            }
+            area.personas_reservadas = personas_reservadas;
             area.personas_disponibles = Math.max(0, (area.capacidad_personas || 0) - area.personas_reservadas);
             area.precio = area.precio_area != null ? parseFloat(area.precio_area) : null;
           }
         }
         evento.areas = areas;
       } catch (error) {
-        console.warn('No se pudieron cargar las áreas:', error);
+        console.error('Error crítico al cargar las áreas:', error);
         evento.areas = [];
       }
     } else {
