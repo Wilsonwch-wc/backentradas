@@ -340,7 +340,7 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
             let personas_reservadas = 0;
             try {
               const [reservas] = await pool.execute(
-                `SELECT COALESCE(SUM(cantidad), 0) as total
+                `SELECT COALESCE(SUM(cap.cantidad), 0) as total
                  FROM compras_areas_personas cap
                  INNER JOIN compras c ON cap.compra_id = c.id
                  WHERE cap.area_id = ? AND c.estado IN ('PAGO_PENDIENTE', 'PAGO_REALIZADO', 'ENTRADA_USADA')`,

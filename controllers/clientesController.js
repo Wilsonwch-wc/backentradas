@@ -225,9 +225,9 @@ export const loginConGoogle = async (req, res) => {
       });
     }
 
-    // 2) Si no es admin, buscar o crear cliente
+    // 2) Si no es admin, buscar o crear cliente (robusto con LOWER y TRIM)
     const [clientesExistentes] = await pool.execute(
-      'SELECT * FROM clientes WHERE correo = ? OR (provider = ? AND provider_id = ?)',
+      'SELECT * FROM clientes WHERE LOWER(TRIM(correo)) = LOWER(TRIM(?)) OR (provider = ? AND provider_id = ?)',
       [googleUser.email, 'google', googleUser.sub]
     );
 
@@ -262,25 +262,67 @@ export const loginConGoogle = async (req, res) => {
       );
       cliente = clientesActualizados[0];
     } else {
-      // Crear nuevo cliente
-      const [result] = await pool.execute(
-        `INSERT INTO clientes (nombre, apellido, nombre_completo, correo, provider, provider_id, foto_perfil, email_verificado)
-         VALUES (?, ?, ?, ?, 'google', ?, ?, TRUE)`,
-        [
-          googleUser.given_name || null,
-          googleUser.family_name || null,
-          googleUser.name || null,
-          googleUser.email,
-          googleUser.sub,
-          googleUser.picture || null
-        ]
-      );
+      // Crear nuevo cliente con fail-safe antibloqueo por duplicados
+      try {
+        const [result] = await pool.execute(
+          `INSERT INTO clientes (nombre, apellido, nombre_completo, correo, provider, provider_id, foto_perfil, email_verificado)
+           VALUES (?, ?, ?, ?, 'google', ?, ?, TRUE)`,
+          [
+            googleUser.given_name || null,
+            googleUser.family_name || null,
+            googleUser.name || null,
+            googleUser.email,
+            googleUser.sub,
+            googleUser.picture || null
+          ]
+        );
 
-      const [clientesNuevos] = await pool.execute(
-        'SELECT * FROM clientes WHERE id = ?',
-        [result.insertId]
-      );
-      cliente = clientesNuevos[0];
+        const [clientesNuevos] = await pool.execute(
+          'SELECT * FROM clientes WHERE id = ?',
+          [result.insertId]
+        );
+        cliente = clientesNuevos[0];
+      } catch (insertErr) {
+        if (insertErr.code === 'ER_DUP_ENTRY' || insertErr.message?.includes('Duplicate entry')) {
+          console.warn('⚠️ Choque de clave duplicada en INSERT de cliente con Google, recuperando cliente existente...');
+          const [clientesDeEmergencia] = await pool.execute(
+            'SELECT * FROM clientes WHERE LOWER(TRIM(correo)) = LOWER(TRIM(?))',
+            [googleUser.email]
+          );
+          if (clientesDeEmergencia.length > 0) {
+            cliente = clientesDeEmergencia[0];
+            await pool.execute(
+              `UPDATE clientes SET 
+               nombre = ?, 
+               apellido = ?, 
+               nombre_completo = ?,
+               foto_perfil = ?,
+               provider = 'google',
+               provider_id = ?,
+               email_verificado = TRUE,
+               updated_at = NOW()
+               WHERE id = ?`,
+              [
+                googleUser.given_name || null,
+                googleUser.family_name || null,
+                googleUser.name || null,
+                googleUser.picture || null,
+                googleUser.sub,
+                cliente.id
+              ]
+            );
+            const [clientesActualizados] = await pool.execute(
+              'SELECT * FROM clientes WHERE id = ?',
+              [cliente.id]
+            );
+            cliente = clientesActualizados[0];
+          } else {
+            throw insertErr;
+          }
+        } else {
+          throw insertErr;
+        }
+      }
     }
 
     // Generar token JWT
