@@ -35,6 +35,7 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
   // 2. FECHA Y HORA (debajo del título, centrado)
   const fechaEvento = evento.hora_inicio 
     ? new Date(evento.hora_inicio).toLocaleDateString('es-ES', {
+        timeZone: 'America/La_Paz',
         year: 'numeric',
         month: '2-digit',
         day: '2-digit'
@@ -43,6 +44,7 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
   
   const horaEvento = evento.hora_inicio
     ? new Date(evento.hora_inicio).toLocaleTimeString('es-ES', {
+        timeZone: 'America/La_Paz',
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit'
@@ -333,22 +335,6 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
   
   yPos += 10;
   const contacto = compra.cliente_telefono || compra.cliente_email || '-';
-  doc.text(`CONTACTO: ${contacto}`, margin, yPos, {
-    width: contentWidth
-  });
-  
-  yPos += 10;
-  const fechaEmision = new Date().toLocaleDateString('es-ES', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-  doc.text(`FECHA: ${fechaEmision}`, margin, yPos, {
-    width: contentWidth
-  });
-
   yPos += 10;
   doc.text(`CÓDIGO: ${compra.codigo_unico || '-'}`, margin, yPos, {
     width: contentWidth
