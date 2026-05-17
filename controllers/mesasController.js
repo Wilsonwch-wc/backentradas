@@ -164,19 +164,6 @@ export const crearMesa = async (req, res) => {
       });
     }
 
-    if (codigoMesaFinal) {
-      const [dupCodigo] = await pool.execute(
-        'SELECT id FROM mesas WHERE evento_id = ? AND codigo_mesa = ?',
-        [evento_id, codigoMesaFinal]
-      );
-      if (dupCodigo.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: `Ya existe una mesa con el código ${codigoMesaFinal} en este evento`
-        });
-      }
-    }
-
     // Validar area_id si se proporciona
     let areaIdFinal = null;
     if (area_id) {
@@ -191,6 +178,24 @@ export const crearMesa = async (req, res) => {
         });
       }
       areaIdFinal = area_id;
+    }
+
+    if (codigoMesaFinal) {
+      let query = 'SELECT id FROM mesas WHERE evento_id = ? AND codigo_mesa = ?';
+      let params = [evento_id, codigoMesaFinal];
+      if (areaIdFinal !== null) {
+        query += ' AND area_id = ?';
+        params.push(areaIdFinal);
+      } else {
+        query += ' AND area_id IS NULL';
+      }
+      const [dupCodigo] = await pool.execute(query, params);
+      if (dupCodigo.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Ya existe una mesa con el código ${codigoMesaFinal} en este sector/área`
+        });
+      }
     }
 
     const ventaSolo = venta_solo_mesa === true || venta_solo_mesa === 1 || venta_solo_mesa === '1';
@@ -247,7 +252,7 @@ export const actualizarMesa = async (req, res) => {
 
     // Verificar si la mesa existe
     const [mesasExistentes] = await pool.execute(
-      'SELECT id, evento_id FROM mesas WHERE id = ?',
+      'SELECT id, evento_id, area_id FROM mesas WHERE id = ?',
       [id]
     );
 
@@ -286,14 +291,20 @@ export const actualizarMesa = async (req, res) => {
           ? String(codigo_mesa).trim().toUpperCase()
           : null;
       if (codigo) {
-        const [dupCodigo] = await pool.execute(
-          'SELECT id FROM mesas WHERE evento_id = ? AND codigo_mesa = ? AND id != ?',
-          [eventoId, codigo, id]
-        );
+        let query = 'SELECT id FROM mesas WHERE evento_id = ? AND codigo_mesa = ? AND id != ?';
+        let params = [eventoId, codigo, id];
+        const currentAreaId = area_id !== undefined ? area_id : (mesasExistentes[0].area_id || null);
+        if (currentAreaId !== null) {
+          query += ' AND area_id = ?';
+          params.push(currentAreaId);
+        } else {
+          query += ' AND area_id IS NULL';
+        }
+        const [dupCodigo] = await pool.execute(query, params);
         if (dupCodigo.length > 0) {
           return res.status(400).json({
             success: false,
-            message: `Ya existe una mesa con el código ${codigo} en este evento`
+            message: `Ya existe una mesa con el código ${codigo} en este sector/área`
           });
         }
       }
