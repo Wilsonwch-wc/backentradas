@@ -64,6 +64,7 @@ export const enviarBoletoPorEmail = async (email, nombreCliente, pdfPath, datosC
     // Formatear fecha del evento
     const fechaEvento = datosCompra.fechaEvento 
       ? new Date(datosCompra.fechaEvento).toLocaleDateString('es-ES', {
+          timeZone: 'America/La_Paz',
           weekday: 'long',
           year: 'numeric',
           month: 'long',

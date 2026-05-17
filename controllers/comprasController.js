@@ -2652,7 +2652,8 @@ export const reenviarBoleto = async (req, res) => {
     const pdfUrl = `${serverBase}${pdfPath.replace(/\\/g, '/').replace(/^.*\/uploads/, '/uploads')}`;
 
     // Formatear fecha del evento
-    const fechaEvento = evento.evento_fecha ? new Date(evento.evento_fecha).toLocaleDateString('es-ES', {
+    const fechaEvento = evento.hora_inicio ? new Date(evento.hora_inicio).toLocaleDateString('es-ES', {
+      timeZone: 'America/La_Paz',
       weekday: 'long',
       year: 'numeric',
       month: 'long',
@@ -2942,6 +2943,7 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
 
     // Formatear fecha del evento
     const fechaEvento = compra.evento_fecha ? new Date(compra.evento_fecha).toLocaleDateString('es-ES', {
+      timeZone: 'America/La_Paz',
       weekday: 'long',
       year: 'numeric',
       month: 'long',
