@@ -1,7 +1,7 @@
-import nodemailer from 'nodemailer';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import nodemailer from "nodemailer";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,13 +13,13 @@ const __dirname = path.dirname(__filename);
 const crearTransporter = () => {
   // Configuración desde variables de entorno
   const config = {
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_SECURE === 'true', // true para 465, false para otros puertos
+    host: process.env.SMTP_HOST || "smtp.gmail.com",
+    port: parseInt(process.env.SMTP_PORT || "587"),
+    secure: process.env.SMTP_SECURE === "true", // true para 465, false para otros puertos
     auth: {
       user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS
-    }
+      pass: process.env.SMTP_PASS,
+    },
   };
 
   // Si no hay credenciales configuradas, retornar null
@@ -38,14 +38,20 @@ const crearTransporter = () => {
  * @param {Object} datosCompra - Datos de la compra (evento, código, etc.)
  * @returns {Promise<Object>} - Resultado del envío
  */
-export const enviarBoletoPorEmail = async (email, nombreCliente, pdfPath, datosCompra) => {
+export const enviarBoletoPorEmail = async (
+  email,
+  nombreCliente,
+  pdfPath,
+  datosCompra,
+) => {
   try {
     const transporter = crearTransporter();
 
     if (!transporter) {
       return {
         success: false,
-        message: 'Servicio de correo no configurado. Por favor, configura las variables SMTP en el archivo .env'
+        message:
+          "Servicio de correo no configurado. Por favor, configura las variables SMTP en el archivo .env",
       };
     }
 
@@ -53,26 +59,26 @@ export const enviarBoletoPorEmail = async (email, nombreCliente, pdfPath, datosC
     if (!fs.existsSync(pdfPath)) {
       return {
         success: false,
-        message: `El archivo PDF no existe: ${pdfPath}`
+        message: `El archivo PDF no existe: ${pdfPath}`,
       };
     }
 
     // Leer el archivo PDF
-    const pdfBuffer = fs.readFileSync(pdfPath);
+    const pdfBuffer = await fs.promises.readFile(pdfPath);
     const nombreArchivo = path.basename(pdfPath);
 
     // Formatear fecha del evento
-    const fechaEvento = datosCompra.fechaEvento 
-      ? new Date(datosCompra.fechaEvento).toLocaleDateString('es-ES', {
-          timeZone: 'America/La_Paz',
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
+    const fechaEvento = datosCompra.fechaEvento
+      ? new Date(datosCompra.fechaEvento).toLocaleDateString("es-ES", {
+          timeZone: "America/La_Paz",
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
         })
-      : 'Fecha no disponible';
+      : "Fecha no disponible";
 
     // Crear el contenido del email
     const htmlContent = `
@@ -122,9 +128,9 @@ export const enviarBoletoPorEmail = async (email, nombreCliente, pdfPath, datosC
         </div>
         <div class="content">
           <p>Hola <strong>${nombreCliente}</strong>,</p>
-          
+
           <p>Tu comprobante fue procesado correctamente. Adjuntamos tu boleto en formato PDF.</p>
-          
+
           <div class="info-box">
             <h3>📅 Detalles del Evento</h3>
             <p><strong>Evento:</strong> ${datosCompra.tituloEvento}</p>
@@ -133,7 +139,7 @@ export const enviarBoletoPorEmail = async (email, nombreCliente, pdfPath, datosC
             <p><strong>Total:</strong> $${parseFloat(datosCompra.total).toFixed(2)} BOB</p>
             <p><strong>Código:</strong> ${datosCompra.codigoUnico}</p>
           </div>
-          
+
           <p>Por favor, guarda este correo y lleva tu boleto al evento. ¡Esperamos verte allí! 🎉</p>
         </div>
         <div class="footer">
@@ -154,9 +160,9 @@ export const enviarBoletoPorEmail = async (email, nombreCliente, pdfPath, datosC
         {
           filename: nombreArchivo,
           content: pdfBuffer,
-          contentType: 'application/pdf'
-        }
-      ]
+          contentType: "application/pdf",
+        },
+      ],
     };
 
     // Enviar el correo
@@ -164,17 +170,16 @@ export const enviarBoletoPorEmail = async (email, nombreCliente, pdfPath, datosC
 
     return {
       success: true,
-      message: 'Boleto enviado exitosamente por correo electrónico',
+      message: "Boleto enviado exitosamente por correo electrónico",
       messageId: info.messageId,
-      email: email
+      email: email,
     };
-
   } catch (error) {
-    console.error('❌ Error al enviar boleto por email:', error);
+    console.error("❌ Error al enviar boleto por email:", error);
     return {
       success: false,
-      message: error.message || 'Error al enviar el correo electrónico',
-      error: error.message
+      message: error.message || "Error al enviar el correo electrónico",
+      error: error.message,
     };
   }
 };
@@ -186,14 +191,19 @@ export const enviarBoletoPorEmail = async (email, nombreCliente, pdfPath, datosC
  * @param {string} codigo - Código de 4 dígitos
  * @returns {Promise<Object>} - Resultado del envío
  */
-export const enviarCodigoVerificacion = async (email, nombreCliente, codigo) => {
+export const enviarCodigoVerificacion = async (
+  email,
+  nombreCliente,
+  codigo,
+) => {
   try {
     const transporter = crearTransporter();
 
     if (!transporter) {
       return {
         success: false,
-        message: 'Servicio de correo no configurado. Por favor, configura las variables SMTP en el archivo .env'
+        message:
+          "Servicio de correo no configurado. Por favor, configura las variables SMTP en el archivo .env",
       };
     }
 
@@ -260,16 +270,16 @@ export const enviarCodigoVerificacion = async (email, nombreCliente, codigo) => 
           <h1>🔐 Verifica tu correo electrónico</h1>
         </div>
         <div class="content">
-          <p>Hola <strong>${nombreCliente || 'Usuario'}</strong>,</p>
-          
+          <p>Hola <strong>${nombreCliente || "Usuario"}</strong>,</p>
+
           <p>Gracias por registrarte en PlusTiket. Para completar tu registro, por favor ingresa el siguiente código de verificación:</p>
-          
+
           <div class="codigo-box">
             <p style="margin: 0 0 10px 0; color: #666; font-size: 14px;">Tu código de verificación es:</p>
             <div class="codigo">${codigo}</div>
             <p style="margin: 10px 0 0 0; color: #666; font-size: 12px;">Este código expira en 15 minutos</p>
           </div>
-          
+
           <div class="info-box">
             <p style="margin: 0;"><strong>⚠️ Importante:</strong></p>
             <ul style="margin: 10px 0 0 20px; padding: 0;">
@@ -278,7 +288,7 @@ export const enviarCodigoVerificacion = async (email, nombreCliente, codigo) => 
               <li>Si no solicitaste este código, ignora este correo</li>
             </ul>
           </div>
-          
+
           <p>Si no solicitaste este código, puedes ignorar este correo de forma segura.</p>
         </div>
         <div class="footer">
@@ -293,8 +303,8 @@ export const enviarCodigoVerificacion = async (email, nombreCliente, codigo) => 
     const mailOptions = {
       from: `"PlusTiket" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: '🔐 Código de verificación - PlusTiket',
-      html: htmlContent
+      subject: "🔐 Código de verificación - PlusTiket",
+      html: htmlContent,
     };
 
     // Enviar el correo
@@ -302,17 +312,16 @@ export const enviarCodigoVerificacion = async (email, nombreCliente, codigo) => 
 
     return {
       success: true,
-      message: 'Código de verificación enviado exitosamente',
+      message: "Código de verificación enviado exitosamente",
       messageId: info.messageId,
-      email: email
+      email: email,
     };
-
   } catch (error) {
-    console.error('❌ Error al enviar código de verificación:', error);
+    console.error("❌ Error al enviar código de verificación:", error);
     return {
       success: false,
-      message: error.message || 'Error al enviar el correo electrónico',
-      error: error.message
+      message: error.message || "Error al enviar el correo electrónico",
+      error: error.message,
     };
   }
 };
@@ -324,14 +333,19 @@ export const enviarCodigoVerificacion = async (email, nombreCliente, codigo) => 
  * @param {string} codigo - Código de 4 dígitos
  * @returns {Promise<Object>} - Resultado del envío
  */
-export const enviarCodigoRecuperacion = async (email, nombreCliente, codigo) => {
+export const enviarCodigoRecuperacion = async (
+  email,
+  nombreCliente,
+  codigo,
+) => {
   try {
     const transporter = crearTransporter();
 
     if (!transporter) {
       return {
         success: false,
-        message: 'Servicio de correo no configurado. Por favor, configura las variables SMTP en el archivo .env'
+        message:
+          "Servicio de correo no configurado. Por favor, configura las variables SMTP en el archivo .env",
       };
     }
 
@@ -398,16 +412,16 @@ export const enviarCodigoRecuperacion = async (email, nombreCliente, codigo) => 
           <h1>🔒 Recuperación de Contraseña</h1>
         </div>
         <div class="content">
-          <p>Hola <strong>${nombreCliente || 'Usuario'}</strong>,</p>
-          
+          <p>Hola <strong>${nombreCliente || "Usuario"}</strong>,</p>
+
           <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta. Si no solicitaste esto, puedes ignorar este correo de forma segura.</p>
-          
+
           <div class="codigo-box">
             <p style="margin: 0 0 10px 0; color: #666; font-size: 14px;">Tu código de recuperación es:</p>
             <div class="codigo">${codigo}</div>
             <p style="margin: 10px 0 0 0; color: #666; font-size: 12px;">Este código expira en 15 minutos</p>
           </div>
-          
+
           <div class="info-box">
             <p style="margin: 0;"><strong>⚠️ Importante:</strong></p>
             <ul style="margin: 10px 0 0 20px; padding: 0;">
@@ -429,8 +443,8 @@ export const enviarCodigoRecuperacion = async (email, nombreCliente, codigo) => 
     const mailOptions = {
       from: `"PlusTiket" <${process.env.SMTP_USER}>`,
       to: email,
-      subject: '🔒 Código de recuperación de contraseña - PlusTiket',
-      html: htmlContent
+      subject: "🔒 Código de recuperación de contraseña - PlusTiket",
+      html: htmlContent,
     };
 
     // Enviar el correo
@@ -438,17 +452,16 @@ export const enviarCodigoRecuperacion = async (email, nombreCliente, codigo) => 
 
     return {
       success: true,
-      message: 'Código de recuperación enviado exitosamente',
+      message: "Código de recuperación enviado exitosamente",
       messageId: info.messageId,
-      email: email
+      email: email,
     };
-
   } catch (error) {
-    console.error('❌ Error al enviar código de recuperación:', error);
+    console.error("❌ Error al enviar código de recuperación:", error);
     return {
       success: false,
-      message: error.message || 'Error al enviar el correo electrónico',
-      error: error.message
+      message: error.message || "Error al enviar el correo electrónico",
+      error: error.message,
     };
   }
 };
@@ -460,8 +473,7 @@ export const verificarConfiguracionEmail = () => {
   const tieneConfig = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
   return {
     configurado: tieneConfig,
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: process.env.SMTP_PORT || '587'
+    host: process.env.SMTP_HOST || "smtp.gmail.com",
+    port: process.env.SMTP_PORT || "587",
   };
 };
-
