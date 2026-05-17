@@ -528,8 +528,7 @@ export const crearCompra = async (req, res) => {
           a.numero_asiento, 
           a.area_id,
           a.mesa_id,
-          m.numero_mesa,
-          tp.nombre as tipo_precio_nombre,
+          m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
           ar.nombre as area_nombre
          FROM compras_asientos ca
          INNER JOIN asientos a ON ca.asiento_id = a.id
@@ -542,7 +541,7 @@ export const crearCompra = async (req, res) => {
 
       // Obtener mesas de la compra
       const [mesasCompra] = await connection.execute(
-        `SELECT cm.*, m.numero_mesa, ar.nombre as area_nombre, tp.nombre as tipo_precio_nombre
+        `SELECT cm.*, m.numero_mesa, m.codigo_mesa, ar.nombre as area_nombre, tp.nombre as tipo_precio_nombre
          FROM compras_mesas cm
          INNER JOIN mesas m ON cm.mesa_id = m.id
          LEFT JOIN areas_layout ar ON m.area_id = ar.id
@@ -622,8 +621,7 @@ export const obtenerCompraPorCodigo = async (req, res) => {
         a.numero_asiento, 
         a.area_id,
         a.mesa_id,
-        m.numero_mesa,
-        tp.nombre as tipo_precio_nombre,
+        m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
         ar.nombre as area_nombre
        FROM compras_asientos ca
        INNER JOIN asientos a ON ca.asiento_id = a.id
@@ -637,7 +635,7 @@ export const obtenerCompraPorCodigo = async (req, res) => {
 
     // Obtener mesas
     const [mesas] = await pool.execute(
-      `SELECT cm.*, m.numero_mesa, ar.nombre as area_nombre, tp.nombre as tipo_precio_nombre
+      `SELECT cm.*, m.numero_mesa, m.codigo_mesa, ar.nombre as area_nombre, tp.nombre as tipo_precio_nombre
        FROM compras_mesas cm
        INNER JOIN mesas m ON cm.mesa_id = m.id
        LEFT JOIN areas_layout ar ON m.area_id = ar.id
@@ -814,8 +812,7 @@ export const buscarEntradaPorCodigo = async (req, res) => {
           ca.*, 
           a.numero_asiento, 
           a.mesa_id, 
-          m.numero_mesa, 
-          tp.nombre as tipo_precio_nombre,
+          m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
           c.id as compra_id,
           c.codigo_unico,
           c.cliente_nombre,
@@ -1458,8 +1455,7 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
         ca.usuario_escaneo_id,
         a.numero_asiento,
         a.mesa_id,
-        m.numero_mesa,
-        tp.nombre as tipo_precio_nombre,
+        m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
         c.id as compra_id,
         c.codigo_unico,
         c.cliente_nombre,
@@ -2078,8 +2074,7 @@ export const obtenerMisCompras = async (req, res) => {
           ca.*, 
           a.numero_asiento, 
           a.mesa_id,
-          m.numero_mesa,
-          tp.nombre as tipo_precio_nombre,
+          m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
           ar.nombre as area_nombre
          FROM compras_asientos ca
          INNER JOIN asientos a ON ca.asiento_id = a.id
@@ -2092,7 +2087,7 @@ export const obtenerMisCompras = async (req, res) => {
       );
 
       const [mesas] = await pool.execute(
-        `SELECT cm.*, m.numero_mesa, ar.nombre as area_nombre, tp.nombre as tipo_precio_nombre
+        `SELECT cm.*, m.numero_mesa, m.codigo_mesa, ar.nombre as area_nombre, tp.nombre as tipo_precio_nombre
          FROM compras_mesas cm
          INNER JOIN mesas m ON cm.mesa_id = m.id
          LEFT JOIN areas_layout ar ON m.area_id = ar.id
@@ -2367,8 +2362,7 @@ export const confirmarPago = async (req, res) => {
             a.numero_asiento, 
             a.area_id,
             a.mesa_id,
-            m.numero_mesa,
-            tp.nombre as tipo_precio_nombre,
+            m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
             ar.nombre as area_nombre,
             ca.codigo_escaneo
            FROM compras_asientos ca
@@ -2387,7 +2381,7 @@ export const confirmarPago = async (req, res) => {
 
       try {
         const [mesas] = await pool.execute(
-          `SELECT cm.*, m.numero_mesa, cm.codigo_escaneo, ar.nombre as area_nombre, tp.nombre as tipo_precio_nombre
+          `SELECT cm.*, m.numero_mesa, m.codigo_mesa, cm.codigo_escaneo, ar.nombre as area_nombre, tp.nombre as tipo_precio_nombre
            FROM compras_mesas cm
            INNER JOIN mesas m ON cm.mesa_id = m.id
            LEFT JOIN areas_layout ar ON m.area_id = ar.id
@@ -2619,8 +2613,7 @@ export const reenviarBoleto = async (req, res) => {
         a.numero_asiento,
         a.area_id,
         a.mesa_id,
-        m.numero_mesa,
-        tp.nombre as tipo_precio_nombre,
+        m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
         ar.nombre as area_nombre
       FROM compras_asientos ca
       INNER JOIN asientos a ON ca.asiento_id = a.id
@@ -2743,8 +2736,7 @@ export const obtenerPDFBoleto = async (req, res) => {
         a.numero_asiento,
         a.area_id,
         a.mesa_id,
-        m.numero_mesa,
-        tp.nombre as tipo_precio_nombre,
+        m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
         ar.nombre as area_nombre
       FROM compras_asientos ca
       INNER JOIN asientos a ON ca.asiento_id = a.id
@@ -2891,8 +2883,7 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
         a.numero_asiento,
         a.area_id,
         a.mesa_id,
-        m.numero_mesa,
-        tp.nombre as tipo_precio_nombre,
+        m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
         ar.nombre as area_nombre
       FROM compras_asientos ca
       INNER JOIN asientos a ON ca.asiento_id = a.id
@@ -3201,8 +3192,7 @@ export const enviarBoletoPorEmail = async (req, res) => {
         a.numero_asiento,
         a.area_id,
         a.mesa_id,
-        m.numero_mesa,
-        tp.nombre as tipo_precio_nombre,
+        m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
         ar.nombre as area_nombre
       FROM compras_asientos ca
       INNER JOIN asientos a ON ca.asiento_id = a.id

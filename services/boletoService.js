@@ -180,10 +180,11 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
          align: 'center'
        });
     yPos += 10;
-  } else if (mesa && mesa.numero_mesa) {
-    let mesaTexto = `Mesa: ${mesa.numero_mesa} (Mesa para 10 personas)`;
+  } else if (mesa && (mesa.numero_mesa || mesa.codigo_mesa)) {
+    const labelMesa = mesa.codigo_mesa || mesa.numero_mesa;
+    let mesaTexto = `Mesa: ${labelMesa} (Mesa para 10 personas)`;
     if (mesa.area_nombre) {
-      mesaTexto = `Mesa: ${mesa.area_nombre} - ${mesa.numero_mesa} (Mesa para 10 personas)`;
+      mesaTexto = `Mesa: ${mesa.area_nombre} - ${labelMesa} (Mesa para 10 personas)`;
     }
     doc.fontSize(8)
        .font('Helvetica')
@@ -407,7 +408,8 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
       totalItems += subtotal;
 
       const itemText = `${evento.titulo || 'Evento'}`;
-      const detalleText = `Mesa ${mesa.numero_mesa} (Mesa para 10 personas)`;
+      const labelMesa = mesa.codigo_mesa || mesa.numero_mesa;
+      const detalleText = `Mesa ${labelMesa} (Mesa para 10 personas)`;
       
       doc.fontSize(7)
          .font('Helvetica')
