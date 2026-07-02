@@ -551,10 +551,9 @@ const generarEntradas = async (pago, transacciones) => {
 
     const compra = compras[0];
 
-    // Tipo de pago con banco del cliente si está disponible
-    const tipoPago = transacciones?.banco?.sigla
-      ? `QR_${transacciones.banco.sigla}`
-      : 'QR';
+    // El campo tipo_pago en la base de datos probablemente sea un ENUM('QR', 'EFECTIVO', etc)
+    // No podemos guardar 'QR_BNB' porque da error de Data truncated.
+    const tipoPago = 'QR';
 
     // 1. Marcar compra como PAGO_REALIZADO
     await connection.execute(
