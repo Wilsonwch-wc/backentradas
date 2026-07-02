@@ -531,13 +531,13 @@ const generarEntradas = async (pago, transacciones) => {
   await connection.beginTransaction();
 
   try {
-    // Verificar que la compra existe y está pendiente
+    // Verificar que la compra existe y está pendiente o fue cancelada por error de timeout
     const [compras] = await connection.execute(
       `SELECT c.*, e.titulo AS evento_titulo, e.hora_inicio AS evento_fecha,
               e.descripcion AS evento_descripcion
        FROM compras c
        INNER JOIN eventos e ON c.evento_id = e.id
-       WHERE c.id = ? AND c.estado = 'PAGO_PENDIENTE'
+       WHERE c.id = ? AND (c.estado = 'PAGO_PENDIENTE' OR c.estado = 'CANCELADO')
        FOR UPDATE`,
       [pago.compra_id]
     );
