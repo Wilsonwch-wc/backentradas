@@ -20,7 +20,9 @@ import comprasRoutes from "./routes/compras.js";
 // import pagosRoutes from './routes/pagos.js'; // Comentado temporalmente
 import reportesRoutes from "./routes/reportes.js";
 import dashboardRoutes from "./routes/dashboard.js";
+import pagosQRRoutes from "./routes/pagosQR.js";
 import seguridadRoutes from "./routes/seguridad.js";
+import { QR_EXPIRACION_MINUTOS, QR_AMBIENTE } from "./controllers/pagosControllerQR.js";
 import cuponesRoutes from "./routes/cupones.js";
 import layoutRoutes from "./routes/layout.js";
 import db from "./config/db.js";
@@ -125,6 +127,9 @@ app.use("/api/cupones", cuponesRoutes); // Rutas para cupones de descuento
 app.use("/api/layout", layoutRoutes); // Ruta para guardar layout completo
 // app.use('/api/pagos', pagosRoutes); // Comentado temporalmente
 
+// Rutas de la pasarela QR. Se exponen bajo /qr para que el webhook sea /qr/confirmed
+app.use("/qr", pagosQRRoutes);
+
 // Log para verificar rutas de seguridad
 console.log("✅ Rutas de seguridad registradas en /api/seguridad");
 
@@ -205,11 +210,50 @@ console.log(
   `⏰ Cron activado: expirar compras pendientes cada 5 min (limite: ${EXPIRAR_PENDIENTES_MINUTOS} min)`,
 );
 
+// ─────────────────────────────────────────────────────────
+// Cron: expirar pagos QR pendientes cuyo tiempo haya vencido
+// Req 9 (EXPIRED), Req 12 (contingencias operativas)
+// ─────────────────────────────────────────────────────────
+const expirarPagosQRPendientes = async () => {
+  try {
+    // Expira registros en 'pagos' con estado 'pending' más antiguos que QR_EXPIRACION_MINUTOS
+    const [resultado] = await db.execute(
+      `UPDATE pagos
+         SET estado = 'expired', updated_at = NOW()
+       WHERE estado = 'pending'
+         AND created_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+      [QR_EXPIRACION_MINUTOS]
+    );
+    if (resultado.affectedRows > 0) {
+      console.log(
+        `⏰ [QR][${QR_AMBIENTE}] Pagos QR expirados: ${resultado.affectedRows} ` +
+        `(mayores a ${QR_EXPIRACION_MINUTOS} min)`
+      );
+    }
+  } catch (error) {
+    console.error("❌ Error en cron expirar pagos QR:", error.message);
+  }
+};
+
+cron.schedule("*/10 * * * *", expirarPagosQRPendientes);
+console.log(`⏰ Cron activado: expirar pagos QR pendientes cada 10 min (limite: ${QR_EXPIRACION_MINUTOS} min)`);
+
 // Iniciar aplicación
 app.listen(PORT, HOST, async () => {
   console.log("🚀 Iniciando backend...");
   console.log(`🌐 Backend corriendo en ${HOST}:${PORT}`);
   console.log(`📡 API disponible en ${HOST}:${PORT}/api`);
+  console.log(`🔐 Pasarela QR - Ambiente activo: ${QR_AMBIENTE}`);
+
+  // Validación de credenciales QR al arranque (Req 11, Req 2)
+  const qrUrlVar = QR_AMBIENTE === 'PRODUCCION' || QR_AMBIENTE === 'PROD' ? 'QR_API_URL_PROD' : 'QR_API_URL_TEST';
+  const qrKeyVar = QR_AMBIENTE === 'PRODUCCION' || QR_AMBIENTE === 'PROD' ? 'QR_API_KEY_PROD' : 'QR_API_KEY_TEST';
+  if (!process.env[qrUrlVar] || !process.env[qrKeyVar]) {
+    console.warn(`⚠️  [QR] Credenciales de ${QR_AMBIENTE} no configuradas. Configura ${qrUrlVar} y ${qrKeyVar} en .env`);
+  } else {
+    console.log(`✅ [QR] Credenciales del ambiente ${QR_AMBIENTE} cargadas correctamente`);
+  }
+
   console.log("─".repeat(50));
 
   // Probar conexión a la base de datos

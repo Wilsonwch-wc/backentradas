@@ -5,10 +5,10 @@ dotenv.config();
 
 // Crear pool de conexiones
 const dbConfig = {
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'entradas_db',
+  database: process.env.DB_NAME,
   waitForConnections: true,
   connectionLimit: parseInt(process.env.DB_POOL_SIZE, 10) || 50,
   queueLimit: 0,
