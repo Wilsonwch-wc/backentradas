@@ -134,16 +134,16 @@ const generarNumeroReferencia = () => {
 const truncarCampoExtra = (texto) => (texto || '').substring(0, 50);
 
 /**
- * Genera un código de escaneo único para boletos.
+ * Genera un código de escaneo único para boletos (5 dígitos).
  */
 const generarCodigoEscaneo = async (connection) => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let codigo;
+  let codigo = '';
   let existe = true;
-  while (existe) {
-    codigo = Array.from({ length: 10 }, () =>
-      chars[Math.floor(Math.random() * chars.length)]
-    ).join('');
+  let intentos = 0;
+  const maxIntentos = 100;
+
+  while (existe && intentos < maxIntentos) {
+    codigo = Math.floor(10000 + Math.random() * 90000).toString();
     const [rows] = await connection.execute(
       `SELECT 1 FROM compras_asientos WHERE codigo_escaneo = ?
        UNION SELECT 1 FROM compras_mesas WHERE codigo_escaneo = ?
@@ -152,7 +152,13 @@ const generarCodigoEscaneo = async (connection) => {
       [codigo, codigo, codigo]
     );
     existe = rows.length > 0;
+    intentos++;
   }
+  
+  if (intentos >= maxIntentos) {
+    throw new Error('No se pudo generar un código de escaneo único');
+  }
+
   return codigo;
 };
 
