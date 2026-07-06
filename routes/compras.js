@@ -18,7 +18,8 @@ import {
   buscarEntradaPorCodigo,
   tickearEntrada,
   desmarcarEscaneo,
-  obtenerEntradasEscaneadas
+  obtenerEntradasEscaneadas,
+  descargarMiBoleto
 } from '../controllers/comprasController.js';
 import { verifyToken, optionalAuth, requireAdminOrVendedor, requireAdmin, checkRole } from '../middleware/auth.js';
 
@@ -55,6 +56,9 @@ router.get('/ocupados/:evento_id', obtenerAsientosOcupados);
 
 // Obtener compras del cliente logueado (requiere autenticación - cliente)
 router.get('/mis-compras', verifyToken, obtenerMisCompras);
+
+// Descargar boleto propio (cliente logueado)
+router.get('/mis-compras/:id/boleto', verifyToken, descargarMiBoleto);
 
 // Resumen de ventas del usuario logueado (vendedor/vendedor_externo)
 router.get('/mis-ventas/resumen', verifyToken, requireAdminOrVendedor, obtenerResumenMisVentas);

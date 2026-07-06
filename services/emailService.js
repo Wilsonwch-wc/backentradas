@@ -150,17 +150,42 @@ export const enviarBoletoPorEmail = async (
       </html>
     `;
 
-    // Configurar el correo
+    // Texto plano (fallback para clientes sin HTML — muy importante para evitar spam)
+    const textContent = `Hola ${nombreCliente},
+
+Tu compra fue procesada correctamente. Adjuntamos tu boleto en formato PDF.
+
+Detalles del Evento:
+- Evento: ${datosCompra.tituloEvento}
+- Fecha: ${fechaEvento}
+- Cantidad: ${datosCompra.cantidad} entrada(s)
+- Total: ${parseFloat(datosCompra.total).toFixed(2)} BOB
+- Código: ${datosCompra.codigoUnico}
+
+Por favor, conserva este correo y lleva tu boleto al evento.
+
+PlusTiket — plustiket.com
+`;
+
+    // Configurar el correo con cabeceras anti-spam
     const mailOptions = {
-      from: `"PlusTiket" <${process.env.SMTP_USER}>`,
+      from: `"PlusTiket Entradas" <${process.env.SMTP_USER}>`,
+      replyTo: process.env.SMTP_USER,
       to: email,
-      subject: `Tu boleto para ${datosCompra.tituloEvento} - ${datosCompra.codigoUnico}`,
+      subject: `Tu boleto: ${datosCompra.tituloEvento} — ${datosCompra.codigoUnico}`,
+      text: textContent,
       html: htmlContent,
+      headers: {
+        'X-Mailer': 'PlusTiket v2.0',
+        'X-Priority': '3',
+        'Importance': 'Normal',
+        'List-Unsubscribe': `<mailto:${process.env.SMTP_USER}?subject=Unsubscribe>`,
+      },
       attachments: [
         {
-          filename: nombreArchivo,
+          filename: `boleto-${datosCompra.codigoUnico}.pdf`,
           content: pdfBuffer,
-          contentType: "application/pdf",
+          contentType: 'application/pdf',
         },
       ],
     };

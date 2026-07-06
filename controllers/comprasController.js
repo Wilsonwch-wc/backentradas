@@ -3292,3 +3292,47 @@ export const enviarBoletoPorEmail = async (req, res) => {
   }
 };
 
+
+// Descargar el PDF del boleto propio (cliente logueado)
+export const descargarMiBoleto = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const [compras] = await pool.execute(
+      SELECT c.id, c.codigo_unico, c.estado, c.usuario_id FROM compras c WHERE c.id = ? AND c.usuario_id = ? LIMIT 1,
+      [id, userId]
+    );
+
+    if (compras.length === 0) {
+      return res.status(404).json({ success: false, message: 'Compra no encontrada' });
+    }
+
+    const compra = compras[0];
+
+    if (compra.estado !== 'PAGO_REALIZADO') {
+      return res.status(400).json({ success: false, message: 'El boleto solo esta disponible cuando el pago ha sido verificado' });
+    }
+
+    const boletosDir = path.join(__dirname, '../uploads/boletos');
+    if (!fs.existsSync(boletosDir)) {
+      return res.status(404).json({ success: false, message: 'Boleto no generado aun' });
+    }
+
+    const archivos = fs.readdirSync(boletosDir);
+    const archivo = archivos.find(f => f.startsWith('boleto-' + compra.codigo_unico + '-') && f.endsWith('.pdf'));
+
+    if (!archivo) {
+      return res.status(404).json({ success: false, message: 'Archivo de boleto no encontrado. Contacte al soporte.' });
+    }
+
+    const filePath = path.join(boletosDir, archivo);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="boleto-' + compra.codigo_unico + '.pdf"');
+    res.sendFile(filePath);
+
+  } catch (error) {
+    console.error('Error al descargar boleto:', error);
+    res.status(500).json({ success: false, message: 'Error al descargar el boleto', error: error.message });
+  }
+};
