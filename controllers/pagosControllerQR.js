@@ -32,6 +32,12 @@ import retry from 'async-retry';
 import pool from '../config/db.js';
 import dotenv from 'dotenv';
 import { generarBoletoPDF } from '../services/boletoService.js';
+import { enviarBoletoPorEmail as enviarBoletoPorEmailService } from '../services/emailService.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -209,6 +215,31 @@ export const crearPagoQR = async (req, res) => {
       : `e${eventoId}u${userId}`;
     const campoExtra = truncarCampoExtra(campoExtraBase);
 
+    // Calcular tiempo restante real si es una compra existente
+    let tiempoQrFinal = QR_TIEMPO_VIGENCIA;
+    if (compra_id) {
+      const [compras] = await pool.execute('SELECT fecha_compra FROM compras WHERE id = ?', [compra_id]);
+      if (compras.length > 0) {
+        const fechaCompra = new Date(compras[0].fecha_compra);
+        const ahora = new Date();
+        const diferenciaMs = ahora - fechaCompra;
+        const minutosTranscurridos = Math.floor(diferenciaMs / 60000);
+        const segundosRestantes = (QR_EXPIRACION_MINUTOS * 60) - Math.floor(diferenciaMs / 1000);
+
+        if (segundosRestantes <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'El tiempo para pagar esta compra ha expirado. La compra será cancelada automáticamente.'
+          });
+        }
+
+        const hh = String(Math.floor(segundosRestantes / 3600)).padStart(2, '0');
+        const mm = String(Math.floor((segundosRestantes % 3600) / 60)).padStart(2, '0');
+        const ss = String(segundosRestantes % 60).padStart(2, '0');
+        tiempoQrFinal = `${hh}:${mm}:${ss}`;
+      }
+    }
+
     // Payload según especificación v1.7
     const pagoData = {
       numeroReferencia: origenNumeroReferencia,
@@ -216,11 +247,11 @@ export const crearPagoQR = async (req, res) => {
       monto: parseFloat(parseFloat(total).toFixed(2)),
       moneda: 'BOB',
       canal: 'WEB',
-      tiempoQr: QR_TIEMPO_VIGENCIA,
+      tiempoQr: tiempoQrFinal,
       campoExtra
     };
 
-    console.log(`[QR][${QR_AMBIENTE}] Generando QR. Ref: ${origenNumeroReferencia} | Monto: ${pagoData.monto} BOB`);
+    console.log(`[QR][${QR_AMBIENTE}] Generando QR. Ref: ${origenNumeroReferencia} | Monto: ${pagoData.monto} BOB | Tiempo: ${tiempoQrFinal}`);
 
     // Llamada POST con reintentos — endpoint real de Redenlace
     let response;
@@ -293,7 +324,7 @@ export const crearPagoQR = async (req, res) => {
         origenNumeroReferencia,
         atcReferencia,
         imagen,                        // Base64 — el frontend renderiza: <img src="data:image/png;base64,...">
-        tiempoQr: QR_TIEMPO_VIGENCIA,
+        tiempoQr: tiempoQrFinal,
         moneda: 'BOB',
         monto: parseFloat(total),
         estadoPasarela: respuesta.codigoRespuesta, // PENDING
@@ -699,7 +730,7 @@ const generarEntradas = async (pago, transacciones) => {
           );
           entradasGenerales = egs;
         }
-        await generarBoletoPDF(
+        const pdfPath = await generarBoletoPDF(
           compra,
           { titulo: compra.evento_titulo, hora_inicio: compra.evento_fecha, descripcion: compra.evento_descripcion },
           asientosBoleto,
@@ -707,6 +738,33 @@ const generarEntradas = async (pago, transacciones) => {
           entradasGenerales
         );
         console.log(`[QR] ✅ PDF del boleto generado para compra ${compra.id}`);
+
+        // Enviar por correo
+        if (compra.cliente_email) {
+          try {
+            const pdfPathCompleto = path.join(__dirname, '..', pdfPath.replace(/^\//, ''));
+            const datosCompra = {
+              tituloEvento: compra.evento_titulo,
+              fechaEvento: compra.evento_fecha,
+              cantidad: compra.cantidad,
+              total: compra.total,
+              codigoUnico: compra.codigo_unico
+            };
+            const emailResult = await enviarBoletoPorEmailService(
+              compra.cliente_email,
+              compra.cliente_nombre,
+              pdfPathCompleto,
+              datosCompra
+            );
+            if (emailResult.success) {
+              console.log(`[QR] 📧 Boleto enviado por correo a ${compra.cliente_email}`);
+            } else {
+              console.error(`[QR] ⚠️ Error al enviar correo: ${emailResult.message}`);
+            }
+          } catch (emailErr) {
+            console.error(`[QR] ❌ Excepción al intentar enviar correo:`, emailErr.message);
+          }
+        }
       } catch (pdfErr) {
         console.error(`[QR] ❌ Error al generar PDF para compra ${compra.id}:`, pdfErr.message);
       }
