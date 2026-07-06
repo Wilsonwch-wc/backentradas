@@ -3300,7 +3300,7 @@ export const descargarMiBoleto = async (req, res) => {
     const userId = req.user.id;
 
     const [compras] = await pool.execute(
-      SELECT c.id, c.codigo_unico, c.estado, c.usuario_id FROM compras c WHERE c.id = ? AND c.usuario_id = ? LIMIT 1,
+      'SELECT c.id, c.codigo_unico, c.estado, c.usuario_id FROM compras c WHERE c.id = ? AND c.usuario_id = ? LIMIT 1',
       [id, userId]
     );
 
