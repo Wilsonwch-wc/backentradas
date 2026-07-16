@@ -39,7 +39,7 @@ export const obtenerEventos = async (req, res) => {
     let query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, created_at, updated_at`;
     
     if (tieneFormaEspacio) {
-      query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height`;
+      query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, escenario_celdas`;
     }
     
     if (tieneLayoutBloqueado) {
@@ -92,7 +92,7 @@ export const obtenerEventoPorId = async (req, res) => {
     let query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, created_at, updated_at`;
     
     if (tieneFormaEspacio) {
-      query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height`;
+      query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, escenario_celdas`;
     }
     
     if (tieneLayoutBloqueado) {
@@ -290,7 +290,7 @@ export const actualizarEvento = async (req, res) => {
   try {
     const { id } = req.params;
     const { imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas,
-            forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, layout_bloqueado,
+            forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, escenario_celdas, layout_bloqueado,
             hoja_ancho, hoja_alto, qr_pago_url, estado,
             ubicacion, ciudad, ubicacion_url } = req.body;
 
@@ -462,7 +462,7 @@ export const actualizarEvento = async (req, res) => {
     
     let querySelect = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, capacidad_maxima, limite_entradas, created_at, updated_at`;
     if (tieneFormaEspacio) {
-      querySelect += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height`;
+      querySelect += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, escenario_celdas`;
     }
     if (tieneLayoutBloqueado) {
       querySelect += `, layout_bloqueado`;

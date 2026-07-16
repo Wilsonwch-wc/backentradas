@@ -5,7 +5,7 @@ const columnasEventoPublicQuery = `
   SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
   WHERE TABLE_SCHEMA = DATABASE() 
     AND TABLE_NAME = 'eventos' 
-    AND COLUMN_NAME IN ('forma_espacio', 'escenario_x', 'escenario_y', 'escenario_width', 'escenario_height', 'hoja_ancho', 'hoja_alto', 'qr_pago_url', 'estado', 'ubicacion', 'ciudad', 'ubicacion_url')
+    AND COLUMN_NAME IN ('forma_espacio', 'escenario_x', 'escenario_y', 'escenario_width', 'escenario_height', 'escenario_celdas', 'hoja_ancho', 'hoja_alto', 'qr_pago_url', 'estado', 'ubicacion', 'ciudad', 'ubicacion_url', 'modo_layout')
 `;
 
 const appendColumnasUbicacionPublic = (query, columnasExistentes) => {
@@ -125,19 +125,24 @@ export const obtenerPlanoPorZona = async (req, res) => {
     const ah = Number(area.alto ?? 0);
 
     const [mesas] = await pool.execute(
-      `SELECT id, numero_mesa, codigo_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto,
-              precio_mesa_completa, precio_silla_individual, venta_solo_mesa
-       FROM mesas
-       WHERE evento_id = ? AND activo = 1 AND (
-         area_id = ?
+      `SELECT m.id, m.numero_mesa, m.codigo_mesa, m.capacidad_sillas, m.tipo_precio_id, m.posicion_x, m.posicion_y, m.ancho, m.alto,
+              m.precio_mesa_completa, m.precio_silla_individual, m.venta_solo_mesa, m.grid_col, m.grid_row,
+              tp.precio as tipo_precio_precio, tp.nombre as tipo_precio_nombre
+       FROM mesas m
+       LEFT JOIN tipos_precio_evento tp ON m.tipo_precio_id = tp.id
+       WHERE m.evento_id = ? AND m.activo = 1 AND (
+         m.area_id = ?
          OR (
-           area_id IS NULL
-           AND (posicion_x + (COALESCE(ancho, 30) / 2)) BETWEEN ? AND (? + ?)
-           AND (posicion_y + (COALESCE(alto, 30) / 2)) BETWEEN ? AND (? + ?)
+           m.area_id IS NULL
+           AND (
+             (m.grid_col IS NOT NULL AND m.grid_col >= ? AND m.grid_col < (? + ?) AND m.grid_row >= ? AND m.grid_row < (? + ?))
+             OR
+             (m.grid_col IS NULL AND (m.posicion_x + (COALESCE(m.ancho, 30) / 2)) BETWEEN ? AND (? + ?) AND (m.posicion_y + (COALESCE(m.alto, 30) / 2)) BETWEEN ? AND (? + ?))
+           )
          )
        )
-       ORDER BY numero_mesa ASC`,
-      [eventoId, areaId, ax, ax, aw, ay, ay, ah]
+       ORDER BY m.numero_mesa ASC`,
+      [eventoId, areaId, ax, ax, aw, ay, ay, ah, ax, ax, aw, ay, ay, ah]
     );
 
     const idsMesas = mesas.map(m => m.id);
@@ -146,9 +151,11 @@ export const obtenerPlanoPorZona = async (req, res) => {
     if (idsMesas.length > 0) {
       const [asientosMesas] = await pool.execute(
         `SELECT a.id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, a.estado,
-                a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre
+                a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre, a.grid_col, a.grid_row,
+                tp.precio as tipo_precio_precio, tp.nombre as tipo_precio_nombre
          FROM asientos a
          LEFT JOIN areas_layout ar ON a.area_id = ar.id
+         LEFT JOIN tipos_precio_evento tp ON a.tipo_precio_id = tp.id
          WHERE a.evento_id = ? AND a.mesa_id IN (${idsMesas.map(() => '?').join(',')})
          ORDER BY a.mesa_id ASC, a.numero_asiento ASC`,
         [eventoId, ...idsMesas]
@@ -158,19 +165,24 @@ export const obtenerPlanoPorZona = async (req, res) => {
 
     const [asientosSueltos] = await pool.execute(
       `SELECT a.id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, a.estado,
-              a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre
+              a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre, a.grid_col, a.grid_row,
+              tp.precio as tipo_precio_precio, tp.nombre as tipo_precio_nombre
        FROM asientos a
        LEFT JOIN areas_layout ar ON a.area_id = ar.id
+       LEFT JOIN tipos_precio_evento tp ON a.tipo_precio_id = tp.id
        WHERE a.evento_id = ? AND a.mesa_id IS NULL AND (
          a.area_id = ?
          OR (
            a.area_id IS NULL
-           AND a.posicion_x BETWEEN ? AND (? + ?)
-           AND a.posicion_y BETWEEN ? AND (? + ?)
+           AND (
+             (a.grid_col IS NOT NULL AND a.grid_col >= ? AND a.grid_col < (? + ?) AND a.grid_row >= ? AND a.grid_row < (? + ?))
+             OR
+             (a.grid_col IS NULL AND a.posicion_x BETWEEN ? AND (? + ?) AND a.posicion_y BETWEEN ? AND (? + ?))
+           )
          )
        )
        ORDER BY a.numero_asiento ASC`,
-      [eventoId, areaId, ax, ax, aw, ay, ay, ah]
+      [eventoId, areaId, ax, ax, aw, ay, ay, ah, ax, ax, aw, ay, ay, ah]
     );
     asientos = [...asientos, ...asientosSueltos];
 
@@ -201,16 +213,18 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
     const tieneHojaAncho = columnasExistentes.includes('hoja_ancho');
     const tieneHojaAlto = columnasExistentes.includes('hoja_alto');
     const tieneQrPago = columnasExistentes.includes('qr_pago_url');
+    const tieneModoLayout = columnasExistentes.includes('modo_layout');
     
     const tieneEstado = columnasExistentes.includes('estado');
     
     let query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, created_at, updated_at`;
     
     if (tieneFormaEspacio) {
-      query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height`;
+      query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, escenario_celdas`;
     }
     if (tieneHojaAncho) query += `, hoja_ancho`;
     if (tieneHojaAlto) query += `, hoja_alto`;
+    if (tieneModoLayout) query += `, modo_layout`;
     if (tieneQrPago) {
       query += `, qr_pago_url`;
     }
@@ -251,7 +265,7 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
         if (!isNaN(numId)) {
           query = `SELECT id, imagen, titulo, descripcion, hora_inicio, precio, es_nuevo, tipo_evento, created_at, updated_at`;
           if (tieneFormaEspacio) {
-            query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height`;
+            query += `, forma_espacio, escenario_x, escenario_y, escenario_width, escenario_height, escenario_celdas`;
           }
           if (tieneHojaAncho) query += `, hoja_ancho`;
           if (tieneHojaAlto) query += `, hoja_alto`;
@@ -299,11 +313,13 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
 
       // Obtener mesas con sus posiciones y dimensiones
       const [mesas] = await pool.execute(
-        `SELECT id, numero_mesa, codigo_mesa, capacidad_sillas, tipo_precio_id, posicion_x, posicion_y, ancho, alto,
-                precio_mesa_completa, precio_silla_individual, venta_solo_mesa
-         FROM mesas
-         WHERE evento_id = ? AND activo = 1
-         ORDER BY COALESCE(codigo_mesa, CAST(numero_mesa AS CHAR)) ASC`,
+        `SELECT m.id, m.numero_mesa, m.codigo_mesa, m.capacidad_sillas, m.tipo_precio_id, m.posicion_x, m.posicion_y, m.ancho, m.alto,
+                m.precio_mesa_completa, m.precio_silla_individual, m.venta_solo_mesa, m.grid_col, m.grid_row,
+                tp.precio as tipo_precio_precio, tp.nombre as tipo_precio_nombre
+         FROM mesas m
+         LEFT JOIN tipos_precio_evento tp ON m.tipo_precio_id = tp.id
+         WHERE m.evento_id = ? AND m.activo = 1
+         ORDER BY COALESCE(m.codigo_mesa, CAST(m.numero_mesa AS CHAR)) ASC`,
         [eventoId]
       );
       evento.mesas = mesas;
@@ -311,9 +327,11 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
       // Obtener asientos con sus posiciones, estado y área
       const [asientos] = await pool.execute(
         `SELECT a.id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, a.estado, 
-                a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre
+                a.posicion_x, a.posicion_y, a.area_id, ar.nombre as area_nombre, a.grid_col, a.grid_row,
+                tp.precio as tipo_precio_precio, tp.nombre as tipo_precio_nombre
          FROM asientos a
          LEFT JOIN areas_layout ar ON a.area_id = ar.id
+         LEFT JOIN tipos_precio_evento tp ON a.tipo_precio_id = tp.id
          WHERE a.evento_id = ?
          ORDER BY a.mesa_id ASC, a.numero_asiento ASC`,
         [eventoId]
@@ -324,7 +342,7 @@ export const obtenerEventoPublicoPorId = async (req, res) => {
       try {
         const [areas] = await pool.execute(
           `SELECT ar.id, ar.nombre, ar.posicion_x, ar.posicion_y, ar.ancho, ar.alto, ar.color,
-                  ar.tipo_area, ar.capacidad_personas, ar.orden, ar.forma, ar.tipo_precio_id,
+                  ar.tipo_area, ar.capacidad_personas, ar.orden, ar.forma, ar.tipo_precio_id, ar.celdas_excluidas,
                   tp.precio as precio_area, tp.nombre as tipo_precio_nombre
            FROM areas_layout ar
            LEFT JOIN tipos_precio_evento tp ON ar.tipo_precio_id = tp.id AND tp.activo = 1

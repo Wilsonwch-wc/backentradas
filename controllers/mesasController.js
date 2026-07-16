@@ -3,7 +3,7 @@ import pool from '../config/db.js';
 const MESA_PRECIOS_SQL = `m.precio_mesa_completa, m.precio_silla_individual, m.venta_solo_mesa`;
 const MESA_CODIGO_SQL = `m.codigo_mesa`;
 const MESA_SELECT_BASE = `m.id, m.evento_id, m.numero_mesa, ${MESA_CODIGO_SQL}, m.capacidad_sillas, m.tipo_precio_id,
-              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id,
+              m.activo, m.posicion_x, m.posicion_y, m.ancho, m.alto, m.area_id, m.grid_col, m.grid_row,
               ${MESA_PRECIOS_SQL}, m.created_at, m.updated_at`;
 
 const parsePrecioOpcional = (val) => {

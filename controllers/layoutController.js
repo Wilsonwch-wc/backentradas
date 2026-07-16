@@ -14,7 +14,10 @@ export const guardarLayoutCompleto = async (req, res) => {
     mesas = [],
     asientos = [],
     areas = [],
+    modo_layout = 'grid',
   } = req.body;
+
+  const modoLayout = ['grid', 'libre'].includes(modo_layout) ? modo_layout : 'grid';
 
   const connection = await pool.getConnection();
   try {
@@ -31,6 +34,7 @@ export const guardarLayoutCompleto = async (req, res) => {
          escenario_y      = ?,
          escenario_width  = ?,
          escenario_height = ?,
+         escenario_celdas = ?,
          hoja_ancho       = ?,
          hoja_alto        = ?,
          layout_bloqueado = 1
@@ -41,6 +45,7 @@ export const guardarLayoutCompleto = async (req, res) => {
         escenario?.y ?? null,
         escenario?.width ?? null,
         escenario?.height ?? null,
+        req.body.escenario_celdas ? JSON.stringify(req.body.escenario_celdas) : null,
         hoja_ancho ?? null,
         hoja_alto ?? null,
         eventoId,
@@ -81,8 +86,8 @@ export const guardarLayoutCompleto = async (req, res) => {
         const [result] = await connection.execute(
           `INSERT INTO areas_layout
              (evento_id, nombre, posicion_x, posicion_y, ancho, alto,
-              color, tipo_area, capacidad_personas, forma, tipo_precio_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              color, tipo_area, capacidad_personas, forma, tipo_precio_id, celdas_excluidas)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             eventoId,
             area.nombre,
@@ -95,6 +100,7 @@ export const guardarLayoutCompleto = async (req, res) => {
             area.capacidad_personas ?? null,
             formaArea,
             area.tipo_precio_id ?? null,
+            area.celdas_excluidas ? JSON.stringify(area.celdas_excluidas) : null,
           ],
         );
         areaIdMap[area.id] = result.insertId;
@@ -102,7 +108,7 @@ export const guardarLayoutCompleto = async (req, res) => {
         await connection.execute(
           `UPDATE areas_layout
            SET nombre=?, posicion_x=?, posicion_y=?, ancho=?, alto=?, color=?,
-               tipo_area=?, capacidad_personas=?, forma=?, tipo_precio_id=?, updated_at=NOW()
+               tipo_area=?, capacidad_personas=?, forma=?, tipo_precio_id=?, celdas_excluidas=?, updated_at=NOW()
            WHERE id = ?`,
           [
             area.nombre,
@@ -115,6 +121,7 @@ export const guardarLayoutCompleto = async (req, res) => {
             area.capacidad_personas ?? null,
             formaArea,
             area.tipo_precio_id ?? null,
+            area.celdas_excluidas ? JSON.stringify(area.celdas_excluidas) : null,
             area.id,
           ],
         );
@@ -204,6 +211,7 @@ export const guardarLayoutCompleto = async (req, res) => {
            SET numero_mesa=?, codigo_mesa=?, capacidad_sillas=?, tipo_precio_id=?,
                area_id=?, posicion_x=?, posicion_y=?, ancho=?, alto=?,
                precio_mesa_completa=?, precio_silla_individual=?, venta_solo_mesa=?,
+               grid_col=?, grid_row=?,
                updated_at=NOW()
            WHERE id = ?`,
           [
@@ -219,6 +227,8 @@ export const guardarLayoutCompleto = async (req, res) => {
             mesa.precio_mesa_completa ?? null,
             mesa.precio_silla_individual ?? null,
             mesa.venta_solo_mesa ? 1 : 0,
+            mesa.grid_col ?? null,
+            mesa.grid_row ?? null,
             mesa.id,
           ],
         );
@@ -228,8 +238,9 @@ export const guardarLayoutCompleto = async (req, res) => {
           `INSERT INTO mesas
              (evento_id, numero_mesa, codigo_mesa, capacidad_sillas, tipo_precio_id,
               area_id, posicion_x, posicion_y, ancho, alto,
-              precio_mesa_completa, precio_silla_individual, venta_solo_mesa)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              precio_mesa_completa, precio_silla_individual, venta_solo_mesa,
+              grid_col, grid_row)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             eventoId,
             numeroMesa,
@@ -244,6 +255,8 @@ export const guardarLayoutCompleto = async (req, res) => {
             mesa.precio_mesa_completa ?? null,
             mesa.precio_silla_individual ?? null,
             mesa.venta_solo_mesa ? 1 : 0,
+            mesa.grid_col ?? null,
+            mesa.grid_row ?? null,
           ],
         );
         mesaIdMap[mesa.id] = result.insertId;
@@ -286,11 +299,11 @@ export const guardarLayoutCompleto = async (req, res) => {
         isRealId(asiento.id) && idsProtegidosAsientos.has(asiento.id);
 
       if (esProtegido) {
-        // Actualizar asiento ya vendido: solo posición y datos visuales, nunca eliminarlo
         await connection.execute(
           `UPDATE asientos
            SET numero_asiento=?, codigo_asiento=?, tipo_precio_id=?,
-               posicion_x=?, posicion_y=?, area_id=?, mesa_id=?
+               posicion_x=?, posicion_y=?, area_id=?, mesa_id=?,
+               grid_col=?, grid_row=?
            WHERE id = ?`,
           [
             asiento.numero_asiento,
@@ -300,16 +313,17 @@ export const guardarLayoutCompleto = async (req, res) => {
             asiento.y != null ? Math.round(asiento.y) : null,
             areaId,
             mesaId,
+            asiento.grid_col ?? null,
+            asiento.grid_row ?? null,
             asiento.id,
           ],
         );
       } else {
-        // Asiento nuevo o sin compras: insertar fresco
         await connection.execute(
           `INSERT INTO asientos
              (evento_id, mesa_id, numero_asiento, codigo_asiento, tipo_precio_id,
-              posicion_x, posicion_y, area_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              posicion_x, posicion_y, area_id, grid_col, grid_row)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             eventoId,
             mesaId,
@@ -319,10 +333,17 @@ export const guardarLayoutCompleto = async (req, res) => {
             asiento.x != null ? Math.round(asiento.x) : null,
             asiento.y != null ? Math.round(asiento.y) : null,
             areaId,
+            asiento.grid_col ?? null,
+            asiento.grid_row ?? null,
           ],
         );
       }
     }
+
+    await connection.execute(
+        "UPDATE eventos SET modo_layout = ? WHERE id = ?",
+        [modoLayout, eventoId]
+    );
 
     await connection.commit();
 

@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import pool from '../config/db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -184,9 +185,12 @@ const generarBoletoIndividual = async (doc, compra, evento, asiento, mesa, entra
     yPos += 10;
   } else if (mesa && (mesa.numero_mesa || mesa.codigo_mesa)) {
     const labelMesa = mesa.codigo_mesa || mesa.numero_mesa;
-    let mesaTexto = `Mesa: ${labelMesa} (Mesa para 10 personas)`;
+    let mesaTexto = `Mesa: ${labelMesa} (Mesa para ${mesa.capacidad_sillas || 10} personas)`;
+    if (mesa.silla_numero) {
+      mesaTexto = `Mesa: ${labelMesa} - Entrada ${mesa.silla_numero} de ${mesa.capacidad_sillas || 10}`;
+    }
     if (mesa.area_nombre) {
-      mesaTexto = `Mesa: ${mesa.area_nombre} - ${labelMesa} (Mesa para 10 personas)`;
+      mesaTexto = `${mesa.area_nombre} - ${mesaTexto}`;
     }
     doc.fontSize(8)
        .font('Helvetica')
@@ -435,11 +439,13 @@ const generarFactura = async (doc, compra, evento, asientos, mesas, entradasGene
 
   // Entradas generales (incluye zonas generales/personas de pie) — precio real por tipo
   if (entradasGenerales && entradasGenerales.length > 0) {
-    const tienePrecioPorTipo = entradasGenerales.some(e => e.tipo_precio_precio != null && e.tipo_precio_precio !== '');
     entradasGenerales.forEach((entrada, idx) => {
-      const precioUnitario = tienePrecioPorTipo
-        ? parseFloat(entrada.tipo_precio_precio || 0)
-        : parseFloat(compra.total || 0) / entradasGenerales.length;
+      let precioUnitario = parseFloat(compra.total || 0) / entradasGenerales.length; // default
+      if (entrada.tipo_precio_precio !== undefined && entrada.tipo_precio_precio !== null && entrada.tipo_precio_precio !== '') {
+        precioUnitario = parseFloat(entrada.tipo_precio_precio);
+      } else if (entrada.area_precio !== undefined && entrada.area_precio !== null && entrada.area_precio !== '') {
+        precioUnitario = parseFloat(entrada.area_precio);
+      }
       const subtotal = precioUnitario;
       totalItems += subtotal;
 
@@ -663,20 +669,67 @@ export const generarBoletoPDF = async (compra, evento, asientos = [], mesas = []
         ticketIndex++;
       }
 
+      // Fetch virtual tickets for mesas (if any mesas exist)
+      let asientosVirtuales = [];
+      if (mesas && mesas.length > 0) {
+        try {
+          const [av] = await pool.execute(
+            `SELECT ca.* FROM compras_asientos ca WHERE ca.compra_id = ? AND ca.asiento_id IS NULL AND ca.estado = 'CONFIRMADO' ORDER BY ca.id ASC`,
+            [compra.id]
+          );
+          asientosVirtuales = av;
+        } catch (e) {
+          console.error('Error fetching virtual tickets for PDF:', e);
+        }
+      }
+
+      let currentIndexVirtuales = 0;
+
       // Mesas
       for (let i = 0; i < mesas.length; i++) {
-        if (ticketIndex > 0) {
-          doc.addPage({
-            size: [ticketWidth, ticketHeight],
-            margin: 0
-          });
-          currentY = 0;
+        const mesa = mesas[i];
+        const cantSillas = parseInt(mesa.capacidad_sillas) || 10;
+        const precioUnitario = parseFloat(mesa.precio_total || 0) / cantSillas;
+        const boletosMesa = asientosVirtuales.slice(currentIndexVirtuales, currentIndexVirtuales + cantSillas);
+        currentIndexVirtuales += cantSillas;
+
+        if (boletosMesa.length > 0) {
+          // Generar una página por cada silla de la mesa
+          for (let j = 0; j < boletosMesa.length; j++) {
+            if (ticketIndex > 0) {
+              doc.addPage({
+                size: [ticketWidth, ticketHeight],
+                margin: 0
+              });
+              currentY = 0;
+            }
+            const index = asientos.length + (i * cantSillas) + j;
+            const boletoVirtual = boletosMesa[j];
+            const mesaBoletoData = { 
+              ...mesa, 
+              codigo_escaneo: boletoVirtual.codigo_escaneo, 
+              silla_numero: j + 1,
+              capacidad_sillas: cantSillas
+            };
+            const alturaUsada = await generarBoletoIndividual(doc, compra, evento, null, mesaBoletoData, null, index, totalEntradas, precioUnitario);
+            currentY = alturaUsada;
+            ticketIndex++;
+          }
+        } else {
+          // Fallback para compras antiguas que no generaron boletos virtuales
+          if (ticketIndex > 0) {
+            doc.addPage({
+              size: [ticketWidth, ticketHeight],
+              margin: 0
+            });
+            currentY = 0;
+          }
+          const index = asientos.length + i;
+          const precio = parseFloat(mesa.precio_total || 0);
+          const alturaUsada = await generarBoletoIndividual(doc, compra, evento, null, mesa, null, index, totalEntradas, precio);
+          currentY = alturaUsada;
+          ticketIndex++;
         }
-        const index = asientos.length + i;
-        const precio = parseFloat(mesas[i].precio_total || 0);
-        const alturaUsada = await generarBoletoIndividual(doc, compra, evento, null, mesas[i], null, index, totalEntradas, precio);
-        currentY = alturaUsada;
-        ticketIndex++;
       }
 
       // Entradas generales
@@ -689,8 +742,14 @@ export const generarBoletoPDF = async (compra, evento, asientos = [], mesas = []
           currentY = 0;
         }
         const index = asientos.length + mesas.length + i;
-        const precio = parseFloat(compra.total || 0) / totalEntradas;
-        const alturaUsada = await generarBoletoIndividual(doc, compra, evento, null, null, entradasGenerales[i], index, totalEntradas, precio);
+        const general = entradasGenerales[i];
+        let precio = parseFloat(compra.total || 0) / totalEntradas;
+        if (general.tipo_precio_precio !== undefined && general.tipo_precio_precio !== null) {
+          precio = parseFloat(general.tipo_precio_precio);
+        } else if (general.area_precio !== undefined && general.area_precio !== null) {
+          precio = parseFloat(general.area_precio);
+        }
+        const alturaUsada = await generarBoletoIndividual(doc, compra, evento, null, null, general, index, totalEntradas, precio);
         currentY = alturaUsada;
         ticketIndex++;
       }

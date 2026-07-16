@@ -7,7 +7,7 @@ export const obtenerAreasPorEvento = async (req, res) => {
 
     const [areas] = await pool.execute(
       `SELECT id, evento_id, nombre, posicion_x, posicion_y, ancho, alto, color,
-              tipo_area, capacidad_personas, orden, forma, tipo_precio_id,
+              tipo_area, capacidad_personas, orden, forma, tipo_precio_id, celdas_excluidas,
               created_at, updated_at
        FROM areas_layout
        WHERE evento_id = ?

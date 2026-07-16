@@ -7,7 +7,7 @@ export const obtenerAsientosPorEvento = async (req, res) => {
 
     const [asientos] = await pool.execute(
       `SELECT a.id, a.evento_id, a.mesa_id, a.numero_asiento, a.codigo_asiento, a.tipo_precio_id, 
-              a.estado, a.posicion_x, a.posicion_y, a.area_id, a.created_at, a.updated_at,
+              a.estado, a.posicion_x, a.posicion_y, a.area_id, a.grid_col, a.grid_row, a.created_at, a.updated_at,
               tp.nombre as tipo_precio_nombre, tp.precio as tipo_precio_precio,
               m.numero_mesa, m.capacidad_sillas,
               ar.nombre as area_nombre

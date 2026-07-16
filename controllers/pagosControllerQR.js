@@ -588,9 +588,8 @@ const generarEntradas = async (pago, transacciones) => {
 
     const compra = compras[0];
 
-    // El campo tipo_pago en la base de datos probablemente sea un ENUM('QR', 'EFECTIVO', etc)
-    // No podemos guardar 'QR_BNB' porque da error de Data truncated.
-    const tipoPago = 'QR';
+    // Distinguir la pasarela de pagos automática (PASARELA_QR) del QR manual verificado por admin (QR)
+    const tipoPago = 'PASARELA_QR';
 
     // 1. Marcar compra como PAGO_REALIZADO
     await connection.execute(
@@ -616,12 +615,29 @@ const generarEntradas = async (pago, transacciones) => {
       );
     }
 
-    // 3. Códigos de escaneo para mesas
+    // 3. Códigos de escaneo para mesas (y boletos virtuales por silla)
     const [mesasCompra] = await connection.execute(
-      `SELECT id FROM compras_mesas WHERE compra_id = ?`,
+      `SELECT cm.id, cm.precio_total, m.capacidad_sillas, m.codigo_mesa, m.numero_mesa
+       FROM compras_mesas cm
+       INNER JOIN mesas m ON cm.mesa_id = m.id
+       WHERE cm.compra_id = ?`,
       [compra.id]
     );
     for (const mesa of mesasCompra) {
+      const cantSillas = parseInt(mesa.capacidad_sillas) || 10;
+      const precioUnitario = mesa.precio_total ? (parseFloat(mesa.precio_total) / cantSillas) : 0;
+      
+      console.log(`[QR] 🪑 Mesa ${mesa.codigo_mesa || mesa.numero_mesa}: generando ${cantSillas} boletos virtuales a Bs.${precioUnitario} c/u`);
+
+      for (let s = 1; s <= cantSillas; s++) {
+        const codSilla = await generarCodigoEscaneo(connection);
+        await connection.execute(
+          `INSERT INTO compras_asientos (compra_id, asiento_id, precio, estado, codigo_escaneo)
+           VALUES (?, NULL, ?, 'CONFIRMADO', ?)`,
+          [compra.id, precioUnitario, codSilla]
+        );
+      }
+
       const codigo = await generarCodigoEscaneo(connection);
       await connection.execute(
         `UPDATE compras_mesas SET estado = 'CONFIRMADO', codigo_escaneo = ? WHERE id = ?`,
@@ -629,60 +645,58 @@ const generarEntradas = async (pago, transacciones) => {
       );
     }
 
-    // 4. Entradas generales (si no hay asientos ni mesas)
-    if (asientosCompra.length === 0 && mesasCompra.length === 0) {
-      const [areasPersonas] = await connection.execute(
-        `SELECT cap.*, ar.nombre AS area_nombre
-         FROM compras_areas_personas cap
-         INNER JOIN areas_layout ar ON cap.area_id = ar.id
-         WHERE cap.compra_id = ?`,
+    // 4. Entradas generales (zonas de pie, sin importar si hay mesas/asientos)
+    const [areasPersonas] = await connection.execute(
+      `SELECT cap.*, ar.nombre AS area_nombre
+       FROM compras_areas_personas cap
+       INNER JOIN areas_layout ar ON cap.area_id = ar.id
+       WHERE cap.compra_id = ?`,
+      [compra.id]
+    );
+
+    if (areasPersonas.length > 0) {
+      // Zonas personas
+      for (const ap of areasPersonas) {
+        const cant = parseInt(ap.cantidad, 10) || 1;
+        for (let i = 0; i < cant; i++) {
+          const codigo = await generarCodigoEscaneo(connection);
+          await connection.execute(
+            `INSERT INTO compras_entradas_generales (compra_id, area_id, codigo_escaneo) VALUES (?, ?, ?)`,
+            [compra.id, ap.area_id, codigo]
+          );
+        }
+        await connection.execute(
+          `UPDATE compras_areas_personas SET estado = 'CONFIRMADO' WHERE id = ?`,
+          [ap.id]
+        );
+      }
+    } else if (asientosCompra.length === 0 && mesasCompra.length === 0) {
+      // Evento general: tipos de precio
+      const [detalle] = await connection.execute(
+        `SELECT tipo_precio_id, cantidad FROM compras_detalle_general WHERE compra_id = ?`,
         [compra.id]
       );
 
-      if (areasPersonas.length > 0) {
-        // Zonas personas
-        for (const ap of areasPersonas) {
-          const cant = parseInt(ap.cantidad, 10) || 1;
+      if (detalle.length > 0) {
+        for (const d of detalle) {
+          const cant = parseInt(d.cantidad, 10) || 1;
           for (let i = 0; i < cant; i++) {
             const codigo = await generarCodigoEscaneo(connection);
             await connection.execute(
-              `INSERT INTO compras_entradas_generales (compra_id, area_id, codigo_escaneo) VALUES (?, ?, ?)`,
-              [compra.id, ap.area_id, codigo]
+              `INSERT INTO compras_entradas_generales (compra_id, tipo_precio_id, codigo_escaneo) VALUES (?, ?, ?)`,
+              [compra.id, d.tipo_precio_id, codigo]
             );
           }
-          await connection.execute(
-            `UPDATE compras_areas_personas SET estado = 'CONFIRMADO' WHERE id = ?`,
-            [ap.id]
-          );
         }
       } else {
-        // Evento general: tipos de precio
-        const [detalle] = await connection.execute(
-          `SELECT tipo_precio_id, cantidad FROM compras_detalle_general WHERE compra_id = ?`,
-          [compra.id]
-        );
-
-        if (detalle.length > 0) {
-          for (const d of detalle) {
-            const cant = parseInt(d.cantidad, 10) || 1;
-            for (let i = 0; i < cant; i++) {
-              const codigo = await generarCodigoEscaneo(connection);
-              await connection.execute(
-                `INSERT INTO compras_entradas_generales (compra_id, tipo_precio_id, codigo_escaneo) VALUES (?, ?, ?)`,
-                [compra.id, d.tipo_precio_id, codigo]
-              );
-            }
-          }
-        } else {
-          // Cantidad simple
-          const cantidad = compra.cantidad || 1;
-          for (let i = 0; i < cantidad; i++) {
-            const codigo = await generarCodigoEscaneo(connection);
-            await connection.execute(
-              `INSERT INTO compras_entradas_generales (compra_id, codigo_escaneo) VALUES (?, ?)`,
-              [compra.id, codigo]
-            );
-          }
+        // Cantidad simple
+        const cantidad = compra.cantidad || 1;
+        for (let i = 0; i < cantidad; i++) {
+          const codigo = await generarCodigoEscaneo(connection);
+          await connection.execute(
+            `INSERT INTO compras_entradas_generales (compra_id, codigo_escaneo) VALUES (?, ?)`,
+            [compra.id, codigo]
+          );
         }
       }
     }
@@ -708,7 +722,7 @@ const generarEntradas = async (pago, transacciones) => {
           [compra.id]
         );
         const [mesasBoleto] = await pool.execute(
-          `SELECT cm.*, m.numero_mesa, m.codigo_mesa, cm.codigo_escaneo,
+          `SELECT cm.*, m.numero_mesa, m.codigo_mesa, m.capacidad_sillas, cm.codigo_escaneo,
                   ar.nombre AS area_nombre, tp.nombre AS tipo_precio_nombre
            FROM compras_mesas cm
            INNER JOIN mesas m ON cm.mesa_id = m.id
@@ -718,18 +732,17 @@ const generarEntradas = async (pago, transacciones) => {
           [compra.id]
         );
         let entradasGenerales = [];
-        if (asientosBoleto.length === 0 && mesasBoleto.length === 0) {
-          const [egs] = await pool.execute(
-            `SELECT eg.*, ar.nombre AS area_nombre,
-                    tp.nombre AS tipo_precio_nombre, tp.precio AS tipo_precio_precio
-             FROM compras_entradas_generales eg
-             LEFT JOIN areas_layout ar ON eg.area_id = ar.id
-             LEFT JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
-             WHERE eg.compra_id = ? ORDER BY eg.id`,
-            [compra.id]
-          );
-          entradasGenerales = egs;
-        }
+        const [egs] = await pool.execute(
+          `SELECT eg.*, ar.nombre AS area_nombre, cap.precio_unitario AS area_precio,
+                  tp.nombre AS tipo_precio_nombre, tp.precio AS tipo_precio_precio
+           FROM compras_entradas_generales eg
+           LEFT JOIN areas_layout ar ON eg.area_id = ar.id
+           LEFT JOIN compras_areas_personas cap ON cap.compra_id = eg.compra_id AND cap.area_id = eg.area_id
+           LEFT JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
+           WHERE eg.compra_id = ? ORDER BY eg.id`,
+          [compra.id]
+        );
+        entradasGenerales = egs;
         const pdfPath = await generarBoletoPDF(
           compra,
           { titulo: compra.evento_titulo, hora_inicio: compra.evento_fecha, descripcion: compra.evento_descripcion },

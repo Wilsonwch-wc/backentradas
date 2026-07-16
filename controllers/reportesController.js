@@ -301,13 +301,16 @@ export const obtenerReportePorEvento = async (req, res) => {
           if (entradasZonaGeneral > 0) acc.entradas_zonas_generales_confirmadas += entradasZonaGeneral;
           // Acumular por tipo de pago
           const totalCompra = parseFloat(compra.total || 0);
-          if (compra.tipo_pago === 'QR') {
-            acc.pagos_qr += 1;
-            acc.total_qr += totalCompra;
-          } else if (compra.tipo_pago === 'EFECTIVO') {
-            acc.pagos_efectivo += 1;
-            acc.total_efectivo += totalCompra;
-          }
+              if (compra.tipo_pago === 'QR') {
+                acc.pagos_qr += 1;
+                acc.total_qr += totalCompra;
+              } else if (compra.tipo_pago === 'EFECTIVO') {
+                acc.pagos_efectivo += 1;
+                acc.total_efectivo += totalCompra;
+              } else if (compra.tipo_pago === 'PASARELA_QR') {
+                acc.pagos_pasarela_qr += 1;
+                acc.total_pasarela_qr += totalCompra;
+              }
         } else if (compra.estado === 'PAGO_PENDIENTE') {
           acc.pagos_pendientes += 1;
           acc.entradas_pendientes += entradas;
@@ -331,8 +334,10 @@ export const obtenerReportePorEvento = async (req, res) => {
         entradas_zonas_generales_pendientes: 0,
         pagos_qr: 0,
         pagos_efectivo: 0,
+        pagos_pasarela_qr: 0,
         total_qr: 0,
-        total_efectivo: 0
+        total_efectivo: 0,
+        total_pasarela_qr: 0
       }
     );
 
@@ -542,17 +547,20 @@ export const exportarReporte = async (req, res) => {
       (acc, c) => {
         if ((c.estado === 'PAGO_REALIZADO' || c.estado === 'ENTRADA_USADA') && c.tipo_pago) {
           const total = parseFloat(c.total || 0);
-          if (c.tipo_pago === 'QR') {
-            acc.pagos_qr += 1;
-            acc.total_qr += total;
-          } else if (c.tipo_pago === 'EFECTIVO') {
-            acc.pagos_efectivo += 1;
-            acc.total_efectivo += total;
-          }
+            if (c.tipo_pago === 'QR') {
+              acc.pagos_qr += 1;
+              acc.total_qr += parseFloat(c.total) || 0;
+            } else if (c.tipo_pago === 'EFECTIVO') {
+              acc.pagos_efectivo += 1;
+              acc.total_efectivo += parseFloat(c.total) || 0;
+            } else if (c.tipo_pago === 'PASARELA_QR') {
+              acc.pagos_pasarela_qr += 1;
+              acc.total_pasarela_qr += parseFloat(c.total) || 0;
+            }
         }
         return acc;
       },
-      { pagos_qr: 0, pagos_efectivo: 0, total_qr: 0, total_efectivo: 0 }
+      { pagos_qr: 0, pagos_efectivo: 0, pagos_pasarela_qr: 0, total_qr: 0, total_efectivo: 0, total_pasarela_qr: 0 }
     );
 
     // Obtener estadísticas básicas
