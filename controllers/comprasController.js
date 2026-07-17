@@ -813,18 +813,24 @@ export const buscarEntradaPorCodigo = async (req, res) => {
           a.numero_asiento, 
           a.mesa_id, 
           m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
+          m2.numero_mesa as mesa_virtual_numero,
+          m2.codigo_mesa as mesa_virtual_codigo,
           c.id as compra_id,
           c.codigo_unico,
           c.cliente_nombre,
+          c.cliente_telefono,
           c.evento_id,
           e.titulo as evento_titulo
          FROM compras_asientos ca
-         INNER JOIN asientos a ON ca.asiento_id = a.id
+         LEFT JOIN asientos a ON ca.asiento_id = a.id
          INNER JOIN compras c ON ca.compra_id = c.id
          INNER JOIN eventos e ON c.evento_id = e.id
          LEFT JOIN mesas m ON a.mesa_id = m.id
          LEFT JOIN tipos_precio_evento tp ON a.tipo_precio_id = tp.id
-         WHERE ca.codigo_escaneo = ? AND ca.estado = 'CONFIRMADO'`,
+         LEFT JOIN compras_mesas cm_ref ON cm_ref.compra_id = ca.compra_id AND ca.asiento_id IS NULL
+         LEFT JOIN mesas m2 ON cm_ref.mesa_id = m2.id
+         WHERE ca.codigo_escaneo = ? AND ca.estado = 'CONFIRMADO'
+         LIMIT 1`,
         [codigo]
       );
 
@@ -834,15 +840,16 @@ export const buscarEntradaPorCodigo = async (req, res) => {
           id: asiento.compra_id,
           codigo_unico: asiento.codigo_unico,
           cliente_nombre: asiento.cliente_nombre,
+          cliente_telefono: asiento.cliente_telefono,
           evento: asiento.evento_titulo
         };
 
         // Solo mostrar información, NO tickear automáticamente
         yaEscaneada = asiento.escaneado ? true : false;
         entradaEscaneada = {
-          tipo: 'ASIENTO',
+          tipo: asiento.asiento_id ? 'ASIENTO' : 'SILLA_MESA',
           numero_asiento: asiento.numero_asiento,
-          numero_mesa: asiento.numero_mesa,
+          numero_mesa: asiento.asiento_id ? asiento.numero_mesa : (asiento.mesa_virtual_numero || null),
           tipo_precio: asiento.tipo_precio_nombre,
           codigo_escaneo: codigo,
           fecha_escaneo: asiento.fecha_escaneo,
@@ -858,6 +865,7 @@ export const buscarEntradaPorCodigo = async (req, res) => {
             c.id as compra_id,
             c.codigo_unico,
             c.cliente_nombre,
+            c.cliente_telefono,
             c.evento_id,
             e.titulo as evento_titulo
            FROM compras_mesas cm
@@ -874,6 +882,7 @@ export const buscarEntradaPorCodigo = async (req, res) => {
             id: mesa.compra_id,
             codigo_unico: mesa.codigo_unico,
             cliente_nombre: mesa.cliente_nombre,
+            cliente_telefono: mesa.cliente_telefono,
             evento: mesa.evento_titulo
           };
 
@@ -896,6 +905,7 @@ export const buscarEntradaPorCodigo = async (req, res) => {
               c.id as compra_id,
               c.codigo_unico,
               c.cliente_nombre,
+              c.cliente_telefono,
               c.evento_id,
               e.titulo as evento_titulo,
               ar.nombre as area_nombre
@@ -921,6 +931,7 @@ export const buscarEntradaPorCodigo = async (req, res) => {
             id: entradaGeneral.compra_id,
             codigo_unico: entradaGeneral.codigo_unico,
             cliente_nombre: entradaGeneral.cliente_nombre,
+            cliente_telefono: entradaGeneral.cliente_telefono,
             evento: entradaGeneral.evento_titulo
           };
 
@@ -996,7 +1007,7 @@ export const tickearEntrada = async (req, res) => {
     let datosNotificacion = null; // Declarar variable fuera de los ifs
 
     try {
-      if (tipo === 'ASIENTO' && compra_asiento_id) {
+      if ((tipo === 'ASIENTO' || tipo === 'SILLA_MESA') && compra_asiento_id) {
         // Verificar que existe y no está escaneada, obtener detalles del asiento
         const [asientos] = await connection.execute(
           `SELECT 
@@ -1005,12 +1016,17 @@ export const tickearEntrada = async (req, res) => {
             a.mesa_id,
             m.numero_mesa, m.codigo_mesa,
             m.capacidad_sillas,
-            tp.nombre as tipo_precio_nombre
+            tp.nombre as tipo_precio_nombre,
+            m2.numero_mesa as mesa_virtual_numero,
+            m2.codigo_mesa as mesa_virtual_codigo
            FROM compras_asientos ca
-           INNER JOIN asientos a ON ca.asiento_id = a.id
+           LEFT JOIN asientos a ON ca.asiento_id = a.id
            LEFT JOIN mesas m ON a.mesa_id = m.id
            LEFT JOIN tipos_precio_evento tp ON a.tipo_precio_id = tp.id
-           WHERE ca.id = ? AND ca.codigo_escaneo = ? AND ca.estado = 'CONFIRMADO'`,
+           LEFT JOIN compras_mesas cm_ref ON cm_ref.compra_id = ca.compra_id AND ca.asiento_id IS NULL
+           LEFT JOIN mesas m2 ON cm_ref.mesa_id = m2.id
+           WHERE ca.id = ? AND ca.codigo_escaneo = ? AND ca.estado = 'CONFIRMADO'
+           LIMIT 1`,
           [compra_asiento_id, codigo]
         );
 
@@ -1071,9 +1087,14 @@ export const tickearEntrada = async (req, res) => {
         );
 
         // Preparar datos para notificación con detalles del asiento
-        let detalleAsiento = `Asiento S${asiento.numero_asiento}`;
-        if (asiento.mesa_id && asiento.numero_mesa) {
-          detalleAsiento = `Silla S${asiento.numero_asiento} de Mesa M${asiento.numero_mesa}`;
+        let detalleAsiento = '';
+        if (asiento.asiento_id) {
+          detalleAsiento = `Asiento S${asiento.numero_asiento}`;
+          if (asiento.mesa_id && asiento.numero_mesa) {
+            detalleAsiento = `Silla S${asiento.numero_asiento} de Mesa M${asiento.numero_mesa}`;
+          }
+        } else {
+          detalleAsiento = `Silla de Mesa M${asiento.mesa_virtual_numero || asiento.mesa_virtual_codigo || 'N/A'}`;
         }
 
         datosNotificacion = {
@@ -1081,10 +1102,10 @@ export const tickearEntrada = async (req, res) => {
           nombre: compraInfo[0]?.cliente_nombre,
           evento: compraInfo[0]?.evento_titulo,
           codigo: codigo,
-          tipo: 'Asiento',
+          tipo: asiento.asiento_id ? 'Asiento' : 'Silla Mesa',
           detalle: detalleAsiento,
-          numero_asiento: asiento.numero_asiento,
-          numero_mesa: asiento.numero_mesa || null,
+          numero_asiento: asiento.numero_asiento || null,
+          numero_mesa: asiento.asiento_id ? asiento.numero_mesa : (asiento.mesa_virtual_numero || null),
           compra_id: asiento.compra_id
         };
 
@@ -1378,7 +1399,7 @@ export const desmarcarEscaneo = async (req, res) => {
     await connection.beginTransaction();
 
     try {
-      if (tipo === 'ASIENTO' && compra_asiento_id) {
+      if ((tipo === 'ASIENTO' || tipo === 'SILLA_MESA') && compra_asiento_id) {
         await connection.execute(
           `UPDATE compras_asientos 
            SET escaneado = FALSE, 
@@ -1453,21 +1474,27 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
         ca.codigo_escaneo,
         ca.fecha_escaneo,
         ca.usuario_escaneo_id,
+        ca.asiento_id,
         a.numero_asiento,
         a.mesa_id,
         m.numero_mesa, m.codigo_mesa, tp.nombre as tipo_precio_nombre,
+        m2.numero_mesa as mesa_virtual_numero,
+        m2.codigo_mesa as mesa_virtual_codigo,
         c.id as compra_id,
         c.codigo_unico,
         c.cliente_nombre,
+        c.cliente_telefono,
         c.evento_id,
         e.titulo as evento_titulo,
         u.nombre_completo as usuario_escaneo
       FROM compras_asientos ca
-      INNER JOIN asientos a ON ca.asiento_id = a.id
+      LEFT JOIN asientos a ON ca.asiento_id = a.id
       INNER JOIN compras c ON ca.compra_id = c.id
       INNER JOIN eventos e ON c.evento_id = e.id
       LEFT JOIN mesas m ON a.mesa_id = m.id
       LEFT JOIN tipos_precio_evento tp ON a.tipo_precio_id = tp.id
+      LEFT JOIN compras_mesas cm_ref ON cm_ref.compra_id = ca.compra_id AND ca.asiento_id IS NULL
+      LEFT JOIN mesas m2 ON cm_ref.mesa_id = m2.id
       LEFT JOIN usuarios u ON ca.usuario_escaneo_id = u.id
       WHERE ca.escaneado = TRUE AND ca.estado = 'CONFIRMADO'
     `;
@@ -1483,6 +1510,7 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
         c.id as compra_id,
         c.codigo_unico,
         c.cliente_nombre,
+        c.cliente_telefono,
         c.evento_id,
         e.titulo as evento_titulo,
         u.nombre_completo as usuario_escaneo
@@ -1504,6 +1532,7 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
         c.id as compra_id,
         c.codigo_unico,
         c.cliente_nombre,
+        c.cliente_telefono,
         c.evento_id,
         e.titulo as evento_titulo,
         u.nombre_completo as usuario_escaneo,
@@ -1676,16 +1705,18 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
       totalSillasDisponibles = totalSillasEnEvento;
     }
     
+    // Stats para asientos individuales (asiento_id NO es NULL)
     let queryStatsAsientos = `
       SELECT 
         COUNT(*) as total_confirmadas,
-        SUM(CASE WHEN escaneado = TRUE THEN 1 ELSE 0 END) as total_escaneadas
+        SUM(CASE WHEN ca.escaneado = TRUE THEN 1 ELSE 0 END) as total_escaneadas
       FROM compras_asientos ca
       INNER JOIN compras c ON ca.compra_id = c.id
       INNER JOIN eventos e ON c.evento_id = e.id
-      WHERE ca.estado = 'CONFIRMADO' AND e.tipo_evento = 'especial'
+      WHERE ca.estado = 'CONFIRMADO' AND e.tipo_evento = 'especial' AND ca.asiento_id IS NOT NULL
     `;
 
+    // Stats para mesas (unidades de mesa)
     let queryStatsMesas = `
       SELECT 
         COUNT(*) as total_confirmadas,
@@ -1696,45 +1727,39 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
       WHERE cm.estado = 'CONFIRMADO' AND e.tipo_evento = 'especial'
     `;
 
+    // Stats para boletos individuales de sillas de mesas (asiento_id IS NULL)
+    let queryStatsSillasBoletos = `
+      SELECT 
+        COUNT(*) as total_confirmadas,
+        SUM(CASE WHEN ca.escaneado = TRUE THEN 1 ELSE 0 END) as total_escaneadas
+      FROM compras_asientos ca
+      INNER JOIN compras c ON ca.compra_id = c.id
+      INNER JOIN eventos e ON c.evento_id = e.id
+      WHERE ca.estado = 'CONFIRMADO' AND e.tipo_evento = 'especial' AND ca.asiento_id IS NULL
+    `;
+
     const statsParams = [];
     if (evento_id) {
       queryStatsAsientos += ' AND c.evento_id = ?';
       queryStatsMesas += ' AND c.evento_id = ?';
+      queryStatsSillasBoletos += ' AND c.evento_id = ?';
       statsParams.push(evento_id);
     }
 
     const [statsAsientos] = await pool.execute(queryStatsAsientos, statsParams);
     const [statsMesas] = await pool.execute(queryStatsMesas, statsParams);
+    const [statsSillasBoletos] = await pool.execute(queryStatsSillasBoletos, statsParams);
 
     const totalConfirmadasAsientos = parseInt(statsAsientos[0]?.total_confirmadas || 0);
     const totalEscaneadasAsientos = parseInt(statsAsientos[0]?.total_escaneadas || 0);
     const totalConfirmadasMesas = parseInt(statsMesas[0]?.total_confirmadas || 0);
     const totalEscaneadasMesas = parseInt(statsMesas[0]?.total_escaneadas || 0);
+    const totalSillasConfirmadas = parseInt(statsSillasBoletos[0]?.total_confirmadas || 0);
+    const totalSillasEscaneadas = parseInt(statsSillasBoletos[0]?.total_escaneadas || 0);
     
     // Calcular disponibles
     const asientosDisponibles = totalAsientosDisponibles !== null ? Math.max(0, totalAsientosDisponibles - totalConfirmadasAsientos) : null;
     const mesasDisponibles = totalMesasDisponibles !== null ? Math.max(0, totalMesasDisponibles - totalConfirmadasMesas) : null;
-
-    // Para mesas, cada mesa tiene cantidad_sillas, así que necesitamos contar las sillas
-    let querySillasMesas = `
-      SELECT 
-        SUM(cm.cantidad_sillas) as total_sillas_confirmadas,
-        SUM(CASE WHEN cm.escaneado = TRUE THEN cm.cantidad_sillas ELSE 0 END) as total_sillas_escaneadas
-      FROM compras_mesas cm
-      INNER JOIN compras c ON cm.compra_id = c.id
-      INNER JOIN eventos e ON c.evento_id = e.id
-      WHERE cm.estado = 'CONFIRMADO' AND e.tipo_evento = 'especial'
-    `;
-
-    if (evento_id) {
-      querySillasMesas += ' AND c.evento_id = ?';
-    }
-
-    const [statsSillasMesas] = await pool.execute(querySillasMesas, statsParams);
-    const totalSillasConfirmadas = parseInt(statsSillasMesas[0]?.total_sillas_confirmadas || 0);
-    const totalSillasEscaneadas = parseInt(statsSillasMesas[0]?.total_sillas_escaneadas || 0);
-    
-    // Calcular sillas disponibles
     const sillasDisponibles = totalSillasDisponibles !== null ? Math.max(0, totalSillasDisponibles - totalSillasConfirmadas) : null;
 
     // Zonas generales (personas de pie) para evento especial
@@ -1796,20 +1821,22 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
     } else {
       // Si hay filtro de evento pero no es general, las entradas generales ya están en entradasGenerales
       // Contar las entradas generales escaneadas para este evento
-      totalEscaneadasGenerales = entradasGenerales.length;
-      const [statsGenerales] = await pool.execute(
-        `SELECT COUNT(*) as total_confirmadas
+      const [statsGeneralesEvento] = await pool.execute(
+        `SELECT 
+           COUNT(*) as total_confirmadas,
+           SUM(CASE WHEN eg.escaneado = TRUE THEN 1 ELSE 0 END) as total_escaneadas
          FROM compras_entradas_generales eg
          INNER JOIN compras c ON eg.compra_id = c.id
-         WHERE c.evento_id = ? AND c.estado = 'PAGO_REALIZADO'`,
+         WHERE c.evento_id = ? AND c.estado IN ('PAGO_REALIZADO', 'ENTRADA_USADA')`,
         [evento_id]
       );
-      totalConfirmadasGenerales = parseInt(statsGenerales[0]?.total_confirmadas || 0);
+      totalConfirmadasGenerales = parseInt(statsGeneralesEvento[0]?.total_confirmadas || 0);
+      totalEscaneadasGenerales = parseInt(statsGeneralesEvento[0]?.total_escaneadas || 0);
     }
 
     // Totales generales (especiales + generales)
     const totalConfirmadas = totalConfirmadasAsientos + totalSillasConfirmadas + totalConfirmadasGenerales;
-    const totalEscaneadas = totalEscaneadasAsientos + totalSillasEscaneadas;
+    const totalEscaneadas = totalEscaneadasAsientos + totalSillasEscaneadas + totalEscaneadasGenerales;
     const totalFaltantes = totalConfirmadas - totalEscaneadas;
 
     console.log(`✅ Encontradas ${asientos.length} asientos y ${mesas.length} mesas escaneadas`);
@@ -1820,8 +1847,10 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
       data: {
         asientos: asientos.map(a => ({
           ...a,
-          tipo: 'ASIENTO',
-          compra_asiento_id: a.id
+          tipo: a.asiento_id ? 'ASIENTO' : 'SILLA_MESA',
+          compra_asiento_id: a.id,
+          numero_mesa: a.asiento_id ? a.numero_mesa : (a.mesa_virtual_numero || null),
+          codigo_mesa: a.asiento_id ? a.codigo_mesa : (a.mesa_virtual_codigo || null)
         })),
         mesas: mesas.map(m => ({
           ...m,
