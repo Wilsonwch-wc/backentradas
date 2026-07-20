@@ -205,9 +205,9 @@ const expirarComprasPendientes = async () => {
   }
 };
 
-cron.schedule("*/5 * * * *", expirarComprasPendientes);
+cron.schedule("* * * * *", expirarComprasPendientes);
 console.log(
-  `⏰ Cron activado: expirar compras pendientes cada 5 min (limite: ${EXPIRAR_PENDIENTES_MINUTOS} min)`,
+  `⏰ Cron activado: expirar compras pendientes cada 1 min (limite: ${EXPIRAR_PENDIENTES_MINUTOS} min)`,
 );
 
 // ─────────────────────────────────────────────────────────
@@ -235,8 +235,8 @@ const expirarPagosQRPendientes = async () => {
   }
 };
 
-cron.schedule("*/10 * * * *", expirarPagosQRPendientes);
-console.log(`⏰ Cron activado: expirar pagos QR pendientes cada 10 min (limite: ${QR_EXPIRACION_MINUTOS} min)`);
+cron.schedule("* * * * *", expirarPagosQRPendientes);
+console.log(`⏰ Cron activado: expirar pagos QR pendientes cada 1 min (limite: ${QR_EXPIRACION_MINUTOS} min)`);
 
 // Iniciar aplicación
 app.listen(PORT, HOST, async () => {

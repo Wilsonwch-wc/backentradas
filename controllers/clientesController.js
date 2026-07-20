@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tu_secreto_jwt_aqui';
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '345796663899-oldi1tt8j3h293silmqluppqn0mrmocr.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '314893460207-vp0a4f660vs54to3f3hp7clinf5hbsv3.apps.googleusercontent.com';
 
 const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
