@@ -430,11 +430,17 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
     const numero = formatearNumero(telefono);
     console.log(`📤 Enviando PDF a ${numero}...`);
 
-    // Verificar número (opcional)
+    // Verificar número y obtener ID real
     let destino = numero;
     try {
       const numId = await client.getNumberId(numero.replace('@c.us', ''));
-      if (numId) destino = numId._serialized;
+      if (numId) {
+        // Preferir siempre el formato @c.us si está disponible, evitando @lid
+        destino = numId._serialized.includes('@lid') 
+          ? `${numId.user}@c.us` 
+          : numId._serialized;
+        console.log(`📱 Número verificado: ${destino}`);
+      }
     } catch (e) { /* usar numero original */ }
 
     // Crear media
@@ -445,25 +451,50 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
     const media = new MessageMedia('application/pdf', pdfBuffer.toString('base64'), fileName);
     const caption = mensajeCaption || mensajeTexto || '';
 
-    // Enviar con sendSeen deshabilitado
-    try {
-      await client.sendMessage(destino, media, { 
-        caption, 
-        sendMediaAsDocument: true,
-        sendSeen: false  // Deshabilitar para evitar error markedUnread
-      });
-      console.log(`✅ PDF enviado a ${telefono}`);
-      return { success: true, message: 'PDF enviado correctamente', telefono };
-    } catch (error) {
-      // Error de sendSeen/markedUnread - el mensaje SÍ se envió, solo falla el "marcar como visto"
-      if (error.message?.includes('markedUnread') || error.message?.includes('sendSeen')) {
-        console.log(`✅ PDF enviado a ${telefono} (sendSeen ignorado)`);
+    // Intentar enviar con hasta 2 reintentos si falla por findChat
+    const MAX_REINTENTOS = 2;
+    let ultimoError = null;
+
+    for (let intento = 0; intento <= MAX_REINTENTOS; intento++) {
+      try {
+        if (intento > 0) {
+          console.log(`🔄 Reintentando envío PDF (intento ${intento}/${MAX_REINTENTOS})...`);
+          // Esperar antes del reintento para que WhatsApp sincronice el chat
+          await new Promise(resolve => setTimeout(resolve, 3000 * intento));
+        }
+
+        await client.sendMessage(destino, media, { 
+          caption, 
+          sendMediaAsDocument: true,
+          sendSeen: false
+        });
+        console.log(`✅ PDF enviado a ${telefono}`);
         return { success: true, message: 'PDF enviado correctamente', telefono };
+
+      } catch (error) {
+        // Error de sendSeen/markedUnread - el mensaje SÍ se envió
+        if (error.message?.includes('markedUnread') || error.message?.includes('sendSeen')) {
+          console.log(`✅ PDF enviado a ${telefono} (sendSeen ignorado)`);
+          return { success: true, message: 'PDF enviado correctamente', telefono };
+        }
+
+        // Error findChat: esperar y reintentar con @c.us directo
+        if (error.message?.includes('findChat') || error.message?.includes('new chat not found')) {
+          console.warn(`⚠️ findChat error (intento ${intento}), reintentando...`);
+          // En el reintento usar el número base @c.us directamente
+          destino = numero;
+          ultimoError = error;
+          continue;
+        }
+
+        ultimoError = error;
+        break;
       }
-      throw error;
     }
+
+    throw ultimoError;
   } catch (error) {
-    console.error('❌ Error:', error.message);
+    console.error('❌ Error al enviar PDF (desde servicio):', error.message);
     return { success: false, message: error.message };
   }
 };
