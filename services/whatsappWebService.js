@@ -427,18 +427,16 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
       return { success: false, message: 'Archivo no encontrado' };
     }
 
-    const numero = formatearNumero(telefono);
-    console.log(`📤 Enviando PDF a ${numero}...`);
+    const numeroBase = formatearNumero(telefono); // ej: 59167958901@c.us
+    console.log(`📤 Enviando PDF a ${numeroBase}...`);
 
-    // Verificar número y obtener ID real
-    let destino = numero;
+    // Obtener ID real del número (puede ser @c.us o @lid según el número)
+    let destino = numeroBase;
     try {
-      const numId = await client.getNumberId(numero.replace('@c.us', ''));
+      const numId = await client.getNumberId(numeroBase.replace('@c.us', ''));
       if (numId) {
-        // Preferir siempre el formato @c.us si está disponible, evitando @lid
-        destino = numId._serialized.includes('@lid') 
-          ? `${numId.user}@c.us` 
-          : numId._serialized;
+        // Usar el ID tal cual devuelve WhatsApp (NO forzar @c.us ni @lid)
+        destino = numId._serialized;
         console.log(`📱 Número verificado: ${destino}`);
       }
     } catch (e) { /* usar numero original */ }
@@ -451,15 +449,14 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
     const media = new MessageMedia('application/pdf', pdfBuffer.toString('base64'), fileName);
     const caption = mensajeCaption || mensajeTexto || '';
 
-    // Intentar enviar con hasta 2 reintentos si falla por findChat
+    // Intentar enviar con hasta 2 reintentos en caso de error de chat
     const MAX_REINTENTOS = 2;
     let ultimoError = null;
 
     for (let intento = 0; intento <= MAX_REINTENTOS; intento++) {
       try {
         if (intento > 0) {
-          console.log(`🔄 Reintentando envío PDF (intento ${intento}/${MAX_REINTENTOS})...`);
-          // Esperar antes del reintento para que WhatsApp sincronice el chat
+          console.log(`🔄 Reintentando envío PDF (intento ${intento}/${MAX_REINTENTOS}, destino: ${destino})...`);
           await new Promise(resolve => setTimeout(resolve, 3000 * intento));
         }
 
@@ -478,11 +475,18 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
           return { success: true, message: 'PDF enviado correctamente', telefono };
         }
 
-        // Error findChat: esperar y reintentar con @c.us directo
+        // Error "No LID for user": el número necesita formato @c.us directo
+        if (error.message?.includes('No LID for user')) {
+          console.warn(`⚠️ No LID error (intento ${intento}), cambiando a formato @c.us...`);
+          destino = numeroBase; // Forzar el número de teléfono base @c.us
+          ultimoError = error;
+          continue;
+        }
+
+        // Error findChat: el chat no existe aún, reintentar con número base
         if (error.message?.includes('findChat') || error.message?.includes('new chat not found')) {
-          console.warn(`⚠️ findChat error (intento ${intento}), reintentando...`);
-          // En el reintento usar el número base @c.us directamente
-          destino = numero;
+          console.warn(`⚠️ findChat error (intento ${intento}), reintentando con número base...`);
+          destino = numeroBase;
           ultimoError = error;
           continue;
         }
