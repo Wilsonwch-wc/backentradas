@@ -82,9 +82,9 @@ export const inicializarWhatsAppWeb = async () => {
         dataPath: authPath
       }),
       webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/AulinexHugo/AulinexHugo.github.io/refs/heads/main/2.3000.1017571023-2.3000.1017571023.html'
+        type: 'local'
       },
+      takeoverOnConflict: true,
       puppeteer: {
         headless: true,
         executablePath: chromePath,
