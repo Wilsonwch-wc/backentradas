@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch-path=controllers --watch-path=routes --watch-path=services --watch-path=config --watch-path=middleware --watch-path=index.js index.js"
   },
   "keywords": [],
   "author": "",

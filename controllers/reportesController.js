@@ -9,14 +9,15 @@ const buildDetalleCompraEspecial = (asientos = [], mesas = [], areasPersonas = [
     const mesasLista = mesas
       .map((mesa) => {
         const mesaNum = mesa.numero_mesa || mesa.mesa_id || mesa.id || '';
+        const cod = mesa.codigo_mesa ? ` (${mesa.codigo_mesa})` : '';
         if (mesa.area_nombre) {
-          return `${mesa.area_nombre} - M${mesaNum}`;
+          return `${mesa.area_nombre} - Mesa ${mesaNum}${cod}`;
         }
-        return `M${mesaNum}`;
+        return `Mesa ${mesaNum}${cod}`;
       })
       .join(', ');
     partes.push(
-      `${mesas.length > 1 ? 'Mesas' : 'Mesa'} ${mesasLista} (${totalSillasMesas} ${totalSillasMesas === 1 ? 'silla' : 'sillas'})`
+      `${mesas.length > 1 ? 'Mesas' : 'Mesa'}: ${mesasLista} (${totalSillasMesas} ${totalSillasMesas === 1 ? 'silla' : 'sillas'})`
     );
   }
 
@@ -121,7 +122,7 @@ export const obtenerReportePorEvento = async (req, res) => {
           c.fecha_pago,
           c.fecha_confirmacion
         FROM compras c
-        WHERE c.evento_id = ?
+        WHERE c.evento_id = ? AND c.estado != 'CANCELADO'
         ORDER BY c.fecha_compra DESC
       `,
       [id]
@@ -146,6 +147,7 @@ export const obtenerReportePorEvento = async (req, res) => {
             a.mesa_id,
             a.area_id,
             m.numero_mesa,
+            m.codigo_mesa,
             ar.nombre as area_nombre
           FROM compras_asientos ca
           INNER JOIN asientos a ON ca.asiento_id = a.id
@@ -167,6 +169,7 @@ export const obtenerReportePorEvento = async (req, res) => {
             cm.precio_total,
             cm.mesa_id,
             m.numero_mesa,
+            m.codigo_mesa,
             ar.nombre as area_nombre,
             tp.nombre as tipo_precio_nombre
           FROM compras_mesas cm
@@ -395,7 +398,7 @@ export const exportarReporte = async (req, res) => {
               c.tipo_venta, c.precio_original,
               c.fecha_compra, c.fecha_pago, c.fecha_confirmacion
        FROM compras c
-       WHERE c.evento_id = ?
+       WHERE c.evento_id = ? AND c.estado != 'CANCELADO'
        ORDER BY c.fecha_compra DESC`,
       [evento_id]
     );

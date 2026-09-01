@@ -62,21 +62,17 @@ export const obtenerResumenDashboard = async (req, res) => {
       totalEventos,
       totalCompras,
       pagosConfirmados,
-      totalPendientes,
-      totalPendientesMonto,
+      entradasUsadas,
       ingresosConfirmados,
-      entradasConfirmadas,
-      entradasPendientes
+      entradasConfirmadas
     ] = await Promise.all([
       safeCount('SELECT COUNT(*) AS total FROM clientes'),
       safeCount('SELECT COUNT(*) AS total FROM eventos'),
-      safeCount(`SELECT COUNT(*) AS total FROM compras WHERE 1=1 ${filtroEventoActivo}`),
       safeCount(`SELECT COUNT(*) AS total FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA') ${filtroEventoActivo}`),
-      safeCount(`SELECT COUNT(*) AS total FROM compras WHERE estado = 'PAGO_PENDIENTE' ${filtroEventoActivo}`),
-      safeSum(`SELECT COALESCE(SUM(total),0) AS suma FROM compras WHERE estado = 'PAGO_PENDIENTE' ${filtroEventoActivo}`),
+      safeCount(`SELECT COUNT(*) AS total FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA') ${filtroEventoActivo}`),
+      safeCount(`SELECT COUNT(*) AS total FROM compras WHERE estado = 'ENTRADA_USADA' ${filtroEventoActivo}`),
       safeSum(`SELECT COALESCE(SUM(total),0) AS suma FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA') ${filtroEventoActivo}`),
-      safeSum(`SELECT COALESCE(SUM(cantidad),0) AS suma FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA') ${filtroEventoActivo}`),
-      safeSum(`SELECT COALESCE(SUM(cantidad),0) AS suma FROM compras WHERE estado = 'PAGO_PENDIENTE' ${filtroEventoActivo}`)
+      safeSum(`SELECT COALESCE(SUM(cantidad),0) AS suma FROM compras WHERE estado IN ('PAGO_REALIZADO','ENTRADA_USADA') ${filtroEventoActivo}`)
     ]);
 
     // Lista de todos los eventos para el selector (id, titulo, hora_inicio, estado)
@@ -98,11 +94,12 @@ export const obtenerResumenDashboard = async (req, res) => {
         eventos_habilitados: eventosHabilitados,
         compras: totalCompras,
         pagos_confirmados: pagosConfirmados,
-        pagos_pendientes: totalPendientes,
-        monto_pendiente: totalPendientesMonto,
+        entradas_usadas: entradasUsadas,
+        pagos_pendientes: 0,
+        monto_pendiente: 0,
         ingresos_confirmados: ingresosConfirmados,
         entradas_confirmadas: entradasConfirmadas,
-        entradas_pendientes: entradasPendientes,
+        entradas_pendientes: 0,
         ultima_actualizacion: new Date().toISOString(),
         evento_activo_nombres: nombresEventoActivo,
         lista_eventos

@@ -592,23 +592,38 @@ export const crearCompra = async (req, res) => {
   }
 };
 
-// Obtener compra por código único
+// Obtener compra por código único, teléfono, nombre o email
 export const obtenerCompraPorCodigo = async (req, res) => {
   try {
     const { codigo } = req.params;
+    const term = codigo ? codigo.trim() : '';
+    const cleanPhone = term.replace(/[^\d]/g, '');
+
+    let whereClause = `WHERE c.codigo_unico = ?`;
+    let queryParams = [term];
+
+    if (cleanPhone.length >= 4) {
+      whereClause = `WHERE c.codigo_unico = ? OR c.cliente_telefono LIKE ? OR REPLACE(REPLACE(c.cliente_telefono, ' ', ''), '+', '') LIKE ?`;
+      queryParams = [term, `%${term}%`, `%${cleanPhone}%`];
+    } else if (term.length >= 2) {
+      whereClause = `WHERE c.codigo_unico = ? OR c.cliente_nombre LIKE ? OR c.cliente_email LIKE ?`;
+      queryParams = [term, `%${term}%`, `%${term}%`];
+    }
 
     const [compras] = await pool.execute(
       `SELECT c.*, e.titulo as evento_titulo, e.hora_inicio as evento_fecha
        FROM compras c
        INNER JOIN eventos e ON c.evento_id = e.id
-       WHERE c.codigo_unico = ?`,
-      [codigo]
+       ${whereClause}
+       ORDER BY c.fecha_compra DESC
+       LIMIT 1`,
+      queryParams
     );
 
     if (compras.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Compra no encontrada'
+        message: 'Compra no encontrada con los datos proporcionados'
       });
     }
 
@@ -1912,8 +1927,13 @@ export const obtenerEntradasEscaneadas = async (req, res) => {
 // Obtener todas las compras (admin: todas; vendedor: solo las suyas por usuario_id)
 export const obtenerCompras = async (req, res) => {
   try {
-    let { estado, evento_id } = req.query;
+    let { estado, evento_id, tipo_pago, fecha_desde, fecha_hasta, busqueda } = req.query;
     const rol = (req.user?.rol || '').toLowerCase();
+
+    // Paginación
+    const page  = Math.max(1, parseInt(req.query.page  || '1', 10));
+    const limit = Math.max(1, parseInt(req.query.limit || '10', 10));
+    const offset = (page - 1) * limit;
 
     // "activo" o "proximo" = solo el próximo evento (activo y en curso, +12 horas de duración)
     if (evento_id === 'activo' || evento_id === 'proximo') {
@@ -1922,69 +1942,229 @@ export const obtenerCompras = async (req, res) => {
       );
       evento_id = proximos.length ? String(proximos[0].id) : null;
       if (!evento_id) {
-        return res.json({ success: true, data: [] });
+        return res.json({ success: true, data: [], totalPages: 0, currentPage: 1, total: 0 });
       }
     }
 
-    let query = `
-      SELECT c.*, e.titulo as evento_titulo, e.hora_inicio as evento_fecha
-      FROM compras c
-      INNER JOIN eventos e ON c.evento_id = e.id
-      WHERE 1=1
-    `;
+    let baseWhere = " WHERE 1=1";
     const params = [];
 
     if ((rol === 'vendedor' || rol === 'vendedor_externo') && req.user?.id) {
-      query += ' AND c.usuario_id = ?';
+      baseWhere += ' AND c.usuario_id = ?';
       params.push(req.user.id);
     }
 
     if (estado) {
-      query += ' AND c.estado = ?';
-      params.push(estado);
+      if (estado === 'TODOS_INCLUYE_PENDIENTES' || estado === 'ALL') {
+        // Muestra todo sin filtrar estado (excepto cancelados a menos que se pida)
+      } else {
+        baseWhere += ' AND c.estado = ?';
+        params.push(estado);
+      }
+    } else {
+      // Por defecto: Solo ventas confirmadas y usadas (oculta pendientes y cancelados)
+      baseWhere += " AND c.estado IN ('PAGO_REALIZADO', 'ENTRADA_USADA')";
     }
 
     if (evento_id) {
-      query += ' AND c.evento_id = ?';
+      baseWhere += ' AND c.evento_id = ?';
       params.push(evento_id);
     }
 
-    query += ' ORDER BY c.created_at DESC';
+    // Filtro por tipo de pago (QR, EFECTIVO, PASARELA)
+    if (tipo_pago) {
+      baseWhere += ' AND c.tipo_pago = ?';
+      params.push(tipo_pago.toUpperCase());
+    }
 
-    let compras;
+    // Filtro por rango de fechas (fecha de compra)
+    if (fecha_desde) {
+      baseWhere += ' AND DATE(c.created_at) >= ?';
+      params.push(fecha_desde);
+    }
+    if (fecha_hasta) {
+      baseWhere += ' AND DATE(c.created_at) <= ?';
+      params.push(fecha_hasta);
+    }
+
+    // Filtro por búsqueda general (nombre, teléfono, email, código, número de mesa, código de mesa, asientos)
+    if (busqueda && busqueda.trim()) {
+      const rawTerm = busqueda.trim();
+      const term = `%${rawTerm}%`;
+      const cleanPhone = rawTerm.replace(/[^\d]/g, '');
+      const cleanMesaNum = rawTerm.toLowerCase().replace(/mesa/gi, '').trim();
+
+      let searchCond = `(
+        c.cliente_nombre LIKE ? 
+        OR c.cliente_email LIKE ? 
+        OR c.codigo_unico LIKE ? 
+        OR c.cliente_telefono LIKE ?
+        OR EXISTS (
+          SELECT 1 FROM compras_mesas cm 
+          INNER JOIN mesas m ON cm.mesa_id = m.id 
+          WHERE cm.compra_id = c.id 
+            AND (m.codigo_mesa LIKE ? OR CAST(m.numero_mesa AS CHAR) = ? OR CAST(m.numero_mesa AS CHAR) LIKE ?)
+        )
+        OR EXISTS (
+          SELECT 1 FROM compras_asientos ca 
+          INNER JOIN asientos a ON ca.asiento_id = a.id 
+          LEFT JOIN mesas m2 ON a.mesa_id = m2.id 
+          WHERE ca.compra_id = c.id 
+            AND (a.numero_asiento LIKE ? OR m2.codigo_mesa LIKE ? OR CAST(m2.numero_mesa AS CHAR) = ? OR CAST(m2.numero_mesa AS CHAR) LIKE ?)
+        )
+      )`;
+
+      params.push(
+        term, term, term, term,
+        term, cleanMesaNum || rawTerm, term,
+        term, term, cleanMesaNum || rawTerm, term
+      );
+
+      if (cleanPhone.length >= 4) {
+        searchCond = `(${searchCond} OR REPLACE(REPLACE(c.cliente_telefono, ' ', ''), '+', '') LIKE ?)`;
+        params.push(`%${cleanPhone}%`);
+      }
+
+      baseWhere += ` AND ${searchCond}`;
+    }
+
+
+    // Contar total para paginación
+    let total = 0;
     try {
-      const [rows] = await pool.execute(query, params);
-      compras = rows;
+      const countQuery = `SELECT COUNT(*) as total FROM compras c INNER JOIN eventos e ON c.evento_id = e.id${baseWhere}`;
+      const [countRows] = await pool.execute(countQuery, params);
+      total = countRows[0].total;
     } catch (err) {
-      // Si la tabla no tiene usuario_id, el vendedor ve lista vacía hasta ejecutar la migración
       if (err.code === 'ER_BAD_FIELD_ERROR' && (rol === 'vendedor' || rol === 'vendedor_externo') && (err.message || '').toLowerCase().includes('usuario_id')) {
-        console.warn('Tabla compras sin columna usuario_id. Ejecuta backend/scripts/agregar_usuario_id_compras.sql para que "Mis ventas" filtre por vendedor.');
-        return res.json({ success: true, data: [] });
+        return res.json({ success: true, data: [], totalPages: 0, currentPage: 1, total: 0 });
       }
       throw err;
     }
 
-    // Para cada compra, obtener cantidad de asientos y mesas
+    const totalPages = Math.ceil(total / limit);
+
+    // Nota: mysql2 pool.execute() no soporta LIMIT/OFFSET como placeholders en algunos entornos.
+    // Se embeben directamente como enteros ya validados.
+    const dataQuery = `
+      SELECT c.*, e.titulo as evento_titulo, e.hora_inicio as evento_fecha
+      FROM compras c
+      INNER JOIN eventos e ON c.evento_id = e.id
+      ${baseWhere}
+      ORDER BY c.created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+
+    let compras;
+    try {
+      const [rows] = await pool.execute(dataQuery, params);
+      compras = rows;
+    } catch (err) {
+      if (err.code === 'ER_BAD_FIELD_ERROR' && (rol === 'vendedor' || rol === 'vendedor_externo') && (err.message || '').toLowerCase().includes('usuario_id')) {
+        console.warn('Tabla compras sin columna usuario_id. Ejecuta backend/scripts/agregar_usuario_id_compras.sql para que "Mis ventas" filtre por vendedor.');
+        return res.json({ success: true, data: [], totalPages: 0, currentPage: 1, total: 0 });
+      }
+      throw err;
+    }
+
+    // Para cada compra, obtener detalles completos de mesas, asientos y áreas
     const comprasConDetalles = await Promise.all(compras.map(async (compra) => {
-      const [asientosCount] = await pool.execute(
-        'SELECT COUNT(*) as total FROM compras_asientos WHERE compra_id = ?',
-        [compra.id]
-      );
-      const [mesasCount] = await pool.execute(
-        'SELECT COUNT(*) as total FROM compras_mesas WHERE compra_id = ?',
-        [compra.id]
-      );
+      let mesasDetalle = [];
+      let asientosDetalle = [];
+      let areasDetalle = [];
+      let generalesDetalle = [];
+
+      try {
+        const [mesasRows] = await pool.execute(
+          `SELECT cm.id, cm.mesa_id, cm.cantidad_sillas, cm.precio_total, cm.estado,
+                  COALESCE(m.codigo_mesa, CAST(m.numero_mesa AS CHAR)) as codigo_mesa,
+                  m.numero_mesa,
+                  ar.nombre as area_nombre,
+                  tp.nombre as tipo_precio_nombre
+           FROM compras_mesas cm
+           LEFT JOIN mesas m ON cm.mesa_id = m.id
+           LEFT JOIN areas_layout ar ON m.area_id = ar.id
+           LEFT JOIN tipos_precio_evento tp ON m.tipo_precio_id = tp.id
+           WHERE cm.compra_id = ?`,
+          [compra.id]
+        );
+        mesasDetalle = mesasRows;
+      } catch (mesaErr) {
+        console.error('[comprasController] Error obteniendo mesas_detalle para compra', compra.id, mesaErr.message);
+      }
+
+      try {
+        const [asientosRows] = await pool.execute(
+          `SELECT ca.id, ca.asiento_id, a.numero_asiento,
+                  COALESCE(a.mesa_id, cm2.mesa_id) as mesa_id,
+                  a.area_id,
+                  COALESCE(
+                    COALESCE(m.codigo_mesa, CAST(m.numero_mesa AS CHAR)),
+                    COALESCE(m2.codigo_mesa, CAST(m2.numero_mesa AS CHAR))
+                  ) as codigo_mesa,
+                  COALESCE(m.numero_mesa, m2.numero_mesa) as numero_mesa,
+                  COALESCE(ar_m.nombre, ar_m2.nombre, ar_a.nombre) as area_nombre,
+                  COALESCE(tp_m.nombre, tp_m2.nombre, tp_a.nombre) as tipo_precio_nombre
+           FROM compras_asientos ca
+           LEFT JOIN asientos a ON ca.asiento_id = a.id
+           LEFT JOIN mesas m ON a.mesa_id = m.id
+           LEFT JOIN compras_mesas cm2 ON cm2.compra_id = ca.compra_id AND ca.asiento_id IS NULL
+           LEFT JOIN mesas m2 ON cm2.mesa_id = m2.id
+           LEFT JOIN areas_layout ar_a ON a.area_id = ar_a.id
+           LEFT JOIN areas_layout ar_m ON m.area_id = ar_m.id
+           LEFT JOIN areas_layout ar_m2 ON m2.area_id = ar_m2.id
+           LEFT JOIN tipos_precio_evento tp_a ON a.tipo_precio_id = tp_a.id
+           LEFT JOIN tipos_precio_evento tp_m ON m.tipo_precio_id = tp_m.id
+           LEFT JOIN tipos_precio_evento tp_m2 ON m2.tipo_precio_id = tp_m2.id
+           WHERE ca.compra_id = ?
+           ORDER BY a.numero_asiento ASC`,
+          [compra.id]
+        );
+        asientosDetalle = asientosRows;
+      } catch (asientoErr) {
+        console.error('[comprasController] Error obteniendo asientos_detalle para compra', compra.id, asientoErr.message);
+      }
+
+      try {
+        const [areasRows] = await pool.execute(
+          `SELECT cap.id, cap.area_id, cap.cantidad, cap.precio_unitario, ar.nombre as area_nombre
+           FROM compras_areas_personas cap
+           LEFT JOIN areas_layout ar ON cap.area_id = ar.id
+           WHERE cap.compra_id = ?`,
+          [compra.id]
+        );
+        areasDetalle = areasRows;
+      } catch (_) {}
+
+      try {
+        const [genRows] = await pool.execute(
+          `SELECT tp.nombre as tipo_nombre, COUNT(*) as cantidad
+           FROM compras_entradas_generales eg
+           LEFT JOIN tipos_precio_evento tp ON eg.tipo_precio_id = tp.id
+           WHERE eg.compra_id = ?
+           GROUP BY eg.tipo_precio_id, tp.nombre`,
+          [compra.id]
+        );
+        generalesDetalle = genRows;
+      } catch (_) {}
 
       return {
         ...compra,
-        total_asientos: asientosCount[0].total,
-        total_mesas: mesasCount[0].total
+        total_asientos: asientosDetalle.length,
+        total_mesas: mesasDetalle.length,
+        mesas_detalle: mesasDetalle,
+        asientos_detalle: asientosDetalle,
+        areas_detalle: areasDetalle,
+        generales_detalle: generalesDetalle
       };
     }));
 
     res.json({
       success: true,
-      data: comprasConDetalles
+      data: comprasConDetalles,
+      total,
+      totalPages,
+      currentPage: page
     });
 
   } catch (error) {
