@@ -81,14 +81,23 @@ export const generarReporteExcel = async (datos, nombreArchivo = 'reporte') => {
         }
       };
       rowIndex++;
-      resumenSheet.getCell(`A${rowIndex}`).value = 'Pagos QR:';
-      resumenSheet.getCell(`B${rowIndex}`).value = rtp.pagos_qr;
-      resumenSheet.getCell(`C${rowIndex}`).value = `Bs. ${parseFloat(rtp.total_qr || 0).toFixed(2)}`;
-      rowIndex++;
+      if (rtp.pagos_pasarela_qr > 0 || rtp.total_pasarela_qr > 0) {
+        resumenSheet.getCell(`A${rowIndex}`).value = 'Pasarela QR:';
+        resumenSheet.getCell(`B${rowIndex}`).value = rtp.pagos_pasarela_qr;
+        resumenSheet.getCell(`C${rowIndex}`).value = `Bs. ${parseFloat(rtp.total_pasarela_qr || 0).toFixed(2)}`;
+        rowIndex++;
+      }
       resumenSheet.getCell(`A${rowIndex}`).value = 'Pagos Efectivo:';
       resumenSheet.getCell(`B${rowIndex}`).value = rtp.pagos_efectivo;
       resumenSheet.getCell(`C${rowIndex}`).value = `Bs. ${parseFloat(rtp.total_efectivo || 0).toFixed(2)}`;
-      rowIndex += 2;
+      rowIndex++;
+      if (rtp.pagos_qr > 0 || rtp.total_qr > 0) {
+        resumenSheet.getCell(`A${rowIndex}`).value = 'Pagos QR (Manual):';
+        resumenSheet.getCell(`B${rowIndex}`).value = rtp.pagos_qr;
+        resumenSheet.getCell(`C${rowIndex}`).value = `Bs. ${parseFloat(rtp.total_qr || 0).toFixed(2)}`;
+        rowIndex++;
+      }
+      rowIndex++;
     }
 
     // Estadísticas generales
@@ -333,22 +342,24 @@ export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
         
         yPos += resumenRowHeight;
         
-        // Fila QR
-        doc.rect(resumenTableX, yPos, resumenTableWidth, resumenRowHeight)
-           .fill('#E8F5E9')
-           .stroke('#E0E0E0')
-           .lineWidth(0.5);
-        
-        doc.fontSize(8)
-           .font('Helvetica')
-           .fillColor('#2C3E50')
-           .text('Pagos QR', resumenTableX + 8, yPos + 5)
-           .text(`${rtp.pagos_qr} venta(s)`, resumenTableX + 140, yPos + 5)
-           .font('Helvetica-Bold')
-           .text(`Bs.${parseFloat(rtp.total_qr || 0).toFixed(2)}`, resumenTableX + 210, yPos + 5);
-        
-        yPos += resumenRowHeight;
-        
+        // Fila Pasarela QR
+        if (rtp.pagos_pasarela_qr > 0 || rtp.total_pasarela_qr > 0) {
+          doc.rect(resumenTableX, yPos, resumenTableWidth, resumenRowHeight)
+             .fill('#E1F5FE')
+             .stroke('#E0E0E0')
+             .lineWidth(0.5);
+          
+          doc.fontSize(8)
+             .font('Helvetica')
+             .fillColor('#2C3E50')
+             .text('Pasarela QR', resumenTableX + 8, yPos + 5)
+             .text(`${rtp.pagos_pasarela_qr} venta(s)`, resumenTableX + 140, yPos + 5)
+             .font('Helvetica-Bold')
+             .text(`Bs.${parseFloat(rtp.total_pasarela_qr || 0).toFixed(2)}`, resumenTableX + 210, yPos + 5);
+          
+          yPos += resumenRowHeight;
+        }
+
         // Fila Efectivo
         doc.rect(resumenTableX, yPos, resumenTableWidth, resumenRowHeight)
            .fill('#FFF3E0')
@@ -364,6 +375,24 @@ export const generarReportePDF = async (datos, nombreArchivo = 'reporte') => {
            .text(`Bs.${parseFloat(rtp.total_efectivo || 0).toFixed(2)}`, resumenTableX + 210, yPos + 5);
         
         yPos += resumenRowHeight;
+
+        // Fila QR Manual
+        if (rtp.pagos_qr > 0 || rtp.total_qr > 0) {
+          doc.rect(resumenTableX, yPos, resumenTableWidth, resumenRowHeight)
+             .fill('#E8F5E9')
+             .stroke('#E0E0E0')
+             .lineWidth(0.5);
+          
+          doc.fontSize(8)
+             .font('Helvetica')
+             .fillColor('#2C3E50')
+             .text('Pagos QR (Manual)', resumenTableX + 8, yPos + 5)
+             .text(`${rtp.pagos_qr} venta(s)`, resumenTableX + 140, yPos + 5)
+             .font('Helvetica-Bold')
+             .text(`Bs.${parseFloat(rtp.total_qr || 0).toFixed(2)}`, resumenTableX + 210, yPos + 5);
+          
+          yPos += resumenRowHeight;
+        }
         
         // Fila Total General
         doc.rect(resumenTableX, yPos, resumenTableWidth, resumenRowHeight)

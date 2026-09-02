@@ -362,11 +362,16 @@ export const obtenerReportePorEvento = async (req, res) => {
   }
 };
 
-// Exportar reporte a Excel o PDF
 export const exportarReporte = async (req, res) => {
   try {
     const { evento_id } = req.params;
-    const { formato } = req.query; // 'excel' o 'pdf'
+    const formato = req.body?.formato || req.query?.formato || 'pdf'; // 'excel' o 'pdf'
+    
+    // Obtener IDs filtrados si se envían desde el frontend (body o query)
+    let compraIdsFiltrados = req.body?.compra_ids;
+    if (!compraIdsFiltrados && req.query?.compra_ids) {
+      compraIdsFiltrados = req.query.compra_ids.split(',').map(Number).filter(Boolean);
+    }
 
     if (!evento_id) {
       return res.status(400).json({
@@ -453,9 +458,10 @@ export const exportarReporte = async (req, res) => {
                 a.mesa_id,
                 a.area_id,
                 m.numero_mesa,
+                m.codigo_mesa,
                 ar.nombre as area_nombre
               FROM compras_asientos ca
-              INNER JOIN asientos a ON ca.asiento_id = a.id
+              LEFT JOIN asientos a ON ca.asiento_id = a.id
               LEFT JOIN mesas m ON a.mesa_id = m.id
               LEFT JOIN areas_layout ar ON a.area_id = ar.id
               WHERE ca.compra_id IN (?)
@@ -474,6 +480,7 @@ export const exportarReporte = async (req, res) => {
                 cm.precio_total,
                 cm.mesa_id,
                 m.numero_mesa,
+                m.codigo_mesa,
                 ar.nombre as area_nombre,
                 tp.nombre as tipo_precio_nombre
               FROM compras_mesas cm
@@ -545,21 +552,29 @@ export const exportarReporte = async (req, res) => {
       }
     });
 
-    // Calcular resumen por tipo de pago para la exportación
-    const resumenTipoPago = compras.reduce(
+    // Filtrar solo las compras seleccionadas/filtradas si se proveyó la lista
+    let comprasFinales = comprasConDetalleExport;
+    if (Array.isArray(compraIdsFiltrados) && compraIdsFiltrados.length > 0) {
+      const idsSet = new Set(compraIdsFiltrados.map(Number));
+      comprasFinales = comprasConDetalleExport.filter(c => idsSet.has(Number(c.id)));
+    }
+
+    // Calcular resumen por tipo de pago para la exportación sobre las compras filtradas
+    const resumenTipoPago = comprasFinales.reduce(
       (acc, c) => {
         if ((c.estado === 'PAGO_REALIZADO' || c.estado === 'ENTRADA_USADA') && c.tipo_pago) {
           const total = parseFloat(c.total || 0);
-            if (c.tipo_pago === 'QR') {
-              acc.pagos_qr += 1;
-              acc.total_qr += parseFloat(c.total) || 0;
-            } else if (c.tipo_pago === 'EFECTIVO') {
-              acc.pagos_efectivo += 1;
-              acc.total_efectivo += parseFloat(c.total) || 0;
-            } else if (c.tipo_pago === 'PASARELA_QR') {
-              acc.pagos_pasarela_qr += 1;
-              acc.total_pasarela_qr += parseFloat(c.total) || 0;
-            }
+          const tp = (c.tipo_pago || '').toUpperCase();
+          if (tp.includes('PASARELA')) {
+            acc.pagos_pasarela_qr += 1;
+            acc.total_pasarela_qr += total;
+          } else if (tp.includes('EFECTIVO')) {
+            acc.pagos_efectivo += 1;
+            acc.total_efectivo += total;
+          } else if (tp === 'QR' || tp.includes('QR')) {
+            acc.pagos_qr += 1;
+            acc.total_qr += total;
+          }
         }
         return acc;
       },

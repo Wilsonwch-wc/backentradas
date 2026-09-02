@@ -10,6 +10,7 @@ router.use(requireAdmin);
 router.get('/eventos', obtenerEventosParaReportes);
 router.get('/evento/:id', obtenerReportePorEvento);
 router.get('/exportar/:evento_id', exportarReporte);
+router.post('/exportar/:evento_id', exportarReporte);
 
 export default router;
 
