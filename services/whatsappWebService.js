@@ -227,15 +227,23 @@ export const inicializarWhatsAppWeb = async () => {
     });
 
     // Evento: Desconectado
-    client.on('disconnected', (reason) => {
+    client.on('disconnected', async (reason) => {
       console.log('⚠️ Desconectado:', reason);
       isReady = false;
       phoneNumber = null;
       qrCodeData = null;
       qrCodeImage = null;
+      
+      const oldClient = client;
       client = null;
       initializing = false;
       authenticatedLogged = false;
+
+      if (oldClient) {
+        try {
+          await oldClient.destroy().catch(() => {});
+        } catch (_) {}
+      }
       
       // Reconectar después de 5 segundos
       setTimeout(() => {
