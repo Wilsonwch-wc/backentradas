@@ -119,6 +119,24 @@ const forzarInyeccionWWeb = async () => {
         }
       }
 
+      // Parche crítico al enviar archivos (PDF, imágenes): whatsapp-web.js copia la
+      // propiedad interna __x_id del modelo de media dentro del objeto del mensaje
+      // saliente y con eso reemplaza el id real del Msg. WhatsApp Web falla entonces
+      // al resolver el remitente: "Data passed to getter must include an id property
+      // (it's how we memoize) but got undefined" en getValidatedSender/getSender.
+      // Se limpia __x_id justo antes de que se construya el modelo del mensaje.
+      if (window.Store?.SendMessage?.addAndSendMsgToChat && !window.Store.SendMessage.addAndSendMsgToChat.__limpiaIdMedia) {
+        const addAndSendOriginal = window.Store.SendMessage.addAndSendMsgToChat;
+        const addAndSendParcheado = function (chat, mensaje) {
+          if (mensaje && typeof mensaje === 'object') {
+            try { delete mensaje.__x_id; } catch (_) {}
+          }
+          return addAndSendOriginal.apply(this, arguments);
+        };
+        addAndSendParcheado.__limpiaIdMedia = true;
+        window.Store.SendMessage.addAndSendMsgToChat = addAndSendParcheado;
+      }
+
       // Aplicar parche sendSeen
       if (window.WWebJS) {
         window.WWebJS.sendSeen = async () => true;
@@ -438,6 +456,31 @@ const formatearNumero = (telefono) => {
 };
 
 /**
+ * Verifica en el navegador que el parche de envío de media siga activo y que el
+ * usuario emisor esté resuelto. Deja un rastro en el log para diagnosticar si un
+ * envío vuelve a fallar.
+ */
+const verificarParchesEnvio = async () => {
+  if (!client || !client.pupPage) return null;
+  try {
+    const info = await client.pupPage.evaluate(() => {
+      const serializar = (fn) => {
+        try { return fn()?._serialized || null; } catch (_) { return null; }
+      };
+      return {
+        parcheMedia: Boolean(window.Store?.SendMessage?.addAndSendMsgToChat?.__limpiaIdMedia),
+        meUser: serializar(() => window.Store?.User?.getMaybeMePnUser?.()),
+        meLid: serializar(() => window.Store?.User?.getMaybeMeLidUser?.())
+      };
+    });
+    console.log(`🔎 Parche envío media: ${info.parcheMedia ? 'activo' : 'NO aplicado'} | emisor: ${info.meUser || info.meLid || 'sin resolver'}`);
+    return info;
+  } catch (_) {
+    return null;
+  }
+};
+
+/**
  * Envía un mensaje de texto
  */
 export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
@@ -541,6 +584,10 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
     const media = new MessageMedia('application/pdf', pdfBuffer.toString('base64'), fileName);
     const caption = mensajeCaption || mensajeTexto || '';
 
+    // Asegurar que los parches (incluido el que limpia __x_id al enviar media) estén aplicados
+    await forzarInyeccionWWeb();
+    await verificarParchesEnvio();
+
     // Intentar enviar con hasta 2 reintentos en caso de error de chat
     const MAX_REINTENTOS = 2;
     let ultimoError = null;
@@ -555,11 +602,19 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
         // Asegurar que WWebJS esté inyectado y listo antes de llamar sendMessage
         await forzarInyeccionWWeb();
 
-        await client.sendMessage(destino, media, { 
+        const enviado = await client.sendMessage(destino, media, { 
           caption, 
           sendMediaAsDocument: true,
           sendSeen: false
         });
+
+        // La librería devuelve undefined cuando no encontró el chat: no se envió nada
+        if (!enviado) {
+          const errorSinChat = new Error(`No se encontró el chat de ${destino}; WhatsApp todavía no lo tiene sincronizado`);
+          errorSinChat.reintentable = true;
+          throw errorSinChat;
+        }
+
         console.log(`✅ PDF enviado a ${telefono}`);
         return { success: true, message: 'PDF enviado correctamente', telefono };
 
@@ -572,6 +627,7 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
 
         // Si el error es getChat, No LID, findChat o Evaluation failed, cambiar al número telefónico base @c.us y reintentar
         if (
+          error.reintentable ||
           error.message?.includes('getChat') || 
           error.message?.includes('No LID for user') || 
           error.message?.includes('findChat') || 
