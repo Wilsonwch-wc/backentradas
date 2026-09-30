@@ -4,6 +4,11 @@ import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const { LoadUtils } = require('whatsapp-web.js/src/util/Injected/Utils');
+const { ExposeStore } = require('whatsapp-web.js/src/util/Injected/Store');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +22,73 @@ let phoneNumber = null;
 let initializing = false;
 let authenticatedLogged = false;  // Para evitar logs duplicados
 const authPath = path.join(__dirname, '../.wwebjs_auth');
+
+/**
+ * Extrae el número de teléfono del usuario conectado usando varios métodos
+ */
+const extraerNumero = async () => {
+  if (client?.info?.wid?.user) {
+    return client.info.wid.user;
+  }
+  if (client?.info?.wid?._serialized) {
+    return client.info.wid._serialized.split('@')[0];
+  }
+  if (client?.pupPage) {
+    try {
+      const num = await client.pupPage.evaluate(() => {
+        // 1. localStorage last-wid-md (guarda el JID de la sesión activa en formato: 59167958901:XX@s.whatsapp.net)
+        const lastWid = window.localStorage?.getItem('last-wid-md');
+        if (lastWid) {
+          const m = lastWid.match(/(\d+)[:@]/);
+          if (m && m[1]) return m[1];
+          const m2 = lastWid.match(/^"?(\d+)/);
+          if (m2 && m2[1]) return m2[1];
+        }
+        // 2. localStorage user
+        const widUser = window.localStorage?.getItem('wid-user');
+        if (widUser && /^\d+$/.test(widUser)) return widUser;
+
+        // 3. Store de WhatsApp Web
+        if (window.Store?.Conn?.wid?.user) return window.Store.Conn.wid.user;
+        if (window.Store?.User?.getMaybeMePnUser?.()?.user) return window.Store.User.getMaybeMePnUser().user;
+        if (window.Store?.User?.getMeUser?.()?.user) return window.Store.User.getMeUser().user;
+
+        return null;
+      });
+      if (num) return num;
+    } catch (_) {}
+  }
+  return null;
+};
+
+/**
+ * Fuerza la inyección de Store y WWebJS sin esperar que WhatsApp termine de sincronizar todos los chats
+ */
+const forzarInyeccionWWeb = async () => {
+  if (!client || !client.pupPage) return false;
+  try {
+    const yaInyectado = await client.pupPage.evaluate(() => {
+      return typeof window.Store !== 'undefined' && typeof window.WWebJS !== 'undefined' && typeof window.WWebJS.getChat === 'function';
+    }).catch(() => false);
+
+    if (yaInyectado) return true;
+
+    // Inyectar Store y Utils de whatsapp-web.js directamente en el contexto del navegador
+    await client.pupPage.evaluate(ExposeStore).catch(() => {});
+    await client.pupPage.evaluate(LoadUtils).catch(() => {});
+
+    // Aplicar parche sendSeen
+    await client.pupPage.evaluate(() => {
+      if (window.WWebJS) {
+        window.WWebJS.sendSeen = async () => true;
+      }
+    }).catch(() => {});
+
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
 
 /**
  * Busca Chrome/Chromium en el sistema
@@ -117,78 +189,25 @@ export const inicializarWhatsAppWeb = async () => {
     });
 
     // Evento: Autenticado
-/**
- * Extrae el número de teléfono del usuario conectado usando varios métodos
- */
-const extraerNumero = async () => {
-  if (client?.info?.wid?.user) {
-    return client.info.wid.user;
-  }
-  if (client?.info?.wid?._serialized) {
-    return client.info.wid._serialized.split('@')[0];
-  }
-  if (client?.pupPage) {
-    try {
-      const num = await client.pupPage.evaluate(() => {
-        // 1. Store de WhatsApp Web
-        if (window.Store?.Conn?.wid?.user) return window.Store.Conn.wid.user;
-        if (window.Store?.User?.getMeUser?.()?.user) return window.Store.User.getMeUser().user;
-        // 2. localStorage last-wid-md (guarda el JID de la sesión activa)
-        const lastWid = window.localStorage?.getItem('last-wid-md');
-        if (lastWid) {
-          const match = lastWid.match(/^"?(\d+)/);
-          if (match && match[1]) return match[1];
-        }
-        return null;
-      });
-      if (num) return num;
-    } catch (_) {}
-  }
-  return null;
-};
-
-    // Evento: Autenticado
     client.on('authenticated', () => {
       if (authenticatedLogged) return;
       authenticatedLogged = true;
-      console.log('✅ Autenticado - esperando que carguen los chats de WhatsApp...');
+      console.log('✅ Autenticado en WhatsApp Web');
       qrCodeData = null;
       qrCodeImage = null;
       
-      // Esperar activamente a que WhatsApp termine de cargar y WWebJS esté inyectado
-      let intentos = 0;
-      const maxIntentos = 30; // 30 segundos
-      
-      const verificar = setInterval(async () => {
-        intentos++;
-        
-        if (isReady) {
-          clearInterval(verificar);
-          return;
-        }
-        
+      // Inyectar módulos y extraer número de inmediato sin esperar la sincronización pesada de chats
+      setTimeout(async () => {
         try {
-          if (client && client.pupPage) {
-            const wwebListo = await client.pupPage.evaluate(() => {
-              return typeof window.WWebJS !== 'undefined' && typeof window.WWebJS.getChat === 'function';
-            }).catch(() => false);
-            
-            if (wwebListo) {
-              clearInterval(verificar);
-              isReady = true;
-              phoneNumber = await extraerNumero();
-              console.log(`✅ WhatsApp listo: +${phoneNumber || '(número sincronizado)'}`);
-              return;
-            }
-          }
+          await forzarInyeccionWWeb();
+          phoneNumber = await extraerNumero();
+          isReady = true;
+          console.log(`✅ WhatsApp conectado y listo: +${phoneNumber || '(número sincronizado)'}`);
         } catch (e) {
-          // Continuar intentando
+          console.warn('⚠️ Activando WhatsApp:', e.message);
+          isReady = true;
         }
-        
-        if (intentos >= maxIntentos) {
-          clearInterval(verificar);
-        }
-      }, 1000);
+      }, 1500);
     });
 
     // Evento: Listo
@@ -197,24 +216,7 @@ const extraerNumero = async () => {
       qrCodeData = null;
       qrCodeImage = null;
       
-      // PARCHE: Deshabilitar sendSeen para evitar error markedUnread
-      try {
-        if (client.pupPage) {
-          const wwebLoaded = await client.pupPage.evaluate(() => typeof window.WWebJS !== 'undefined').catch(() => false);
-          if (!wwebLoaded && typeof client.inject === 'function') {
-            await client.inject().catch(() => {});
-          }
-          await client.pupPage.evaluate(() => {
-            if (window.WWebJS && window.WWebJS.sendSeen) {
-              window.WWebJS.sendSeen = async () => true;
-            }
-          }).catch(() => {});
-          console.log('✅ Parche sendSeen aplicado');
-        }
-      } catch (e) {
-        console.log('⚠️ No se pudo aplicar parche sendSeen');
-      }
-      
+      await forzarInyeccionWWeb();
       phoneNumber = await extraerNumero();
       if (phoneNumber) {
         console.log(`✅ WhatsApp listo: +${phoneNumber}`);
@@ -300,17 +302,12 @@ const extraerNumero = async () => {
         console.log('📊 Estado actual:', state);
         
         if (state === 'CONNECTED') {
-          isReady = true;
           qrCodeData = null;
           qrCodeImage = null;
-          
-          const info = await client.info;
-          if (info && info.wid) {
-            phoneNumber = info.wid.user || info.wid._serialized?.split('@')[0];
-            console.log(`✅ Sesión restaurada: +${phoneNumber}`);
-          } else {
-            console.log('✅ Sesión restaurada');
-          }
+          await forzarInyeccionWWeb();
+          phoneNumber = await extraerNumero();
+          isReady = true;
+          console.log(`✅ Sesión restaurada: +${phoneNumber || '(número sincronizado)'}`);
         } else if (!qrCodeData) {
           console.log('⏳ Esperando QR o conexión...');
         }
@@ -335,13 +332,17 @@ const extraerNumero = async () => {
  */
 export const obtenerEstadoWhatsApp = async () => {
   // Verificar estado real si hay cliente
-  if (client && !isReady) {
+  if (client) {
     try {
       const state = await client.getState();
       if (state === 'CONNECTED') {
-        isReady = true;
         qrCodeData = null;
         qrCodeImage = null;
+        await forzarInyeccionWWeb();
+        if (!phoneNumber) {
+          phoneNumber = await extraerNumero();
+        }
+        isReady = true;
       }
     } catch (e) {
       // Ignorar
@@ -393,14 +394,7 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
     }
 
     // Asegurar que WWebJS esté inyectado
-    if (client.pupPage) {
-      const wwebOk = await client.pupPage.evaluate(() => typeof window.WWebJS !== 'undefined' && typeof window.WWebJS.getChat === 'function').catch(() => false);
-      if (!wwebOk && typeof client.inject === 'function') {
-        console.log('⏳ Inyectando WWebJS antes de enviar mensaje...');
-        await client.inject().catch(() => {});
-        await new Promise(r => setTimeout(r, 1500));
-      }
-    }
+    await forzarInyeccionWWeb();
 
     const numero = formatearNumero(telefono);
     console.log(`📤 Enviando mensaje a ${numero}...`);
@@ -503,14 +497,7 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
         }
 
         // Asegurar que WWebJS esté inyectado y listo antes de llamar sendMessage
-        if (client.pupPage) {
-          const wwebOk = await client.pupPage.evaluate(() => typeof window.WWebJS !== 'undefined' && typeof window.WWebJS.getChat === 'function').catch(() => false);
-          if (!wwebOk && typeof client.inject === 'function') {
-            console.log(`⏳ Inyectando WWebJS antes de enviar PDF (intento ${intento})...`);
-            await client.inject().catch(() => {});
-            await new Promise(r => setTimeout(r, 1500));
-          }
-        }
+        await forzarInyeccionWWeb();
 
         await client.sendMessage(destino, media, { 
           caption, 
