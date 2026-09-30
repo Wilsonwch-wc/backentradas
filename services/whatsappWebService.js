@@ -258,7 +258,7 @@ export const inicializarWhatsAppWeb = async () => {
       console.log('✅ WhatsApp inicializado');
       
       // Aplicar parche sendSeen inmediatamente
-      if (client.pupPage) {
+      if (client && client.pupPage) {
         await client.pupPage.evaluate(() => {
           if (window.WWebJS) {
             window.WWebJS.sendSeen = async () => true;
@@ -269,7 +269,7 @@ export const inicializarWhatsAppWeb = async () => {
       console.error('❌ Error en initialize():', initError.message);
       // Si hay error pero el cliente existe, puede que aún funcione
       if (!client) {
-        throw initError;
+        return null;
       }
     }
     
@@ -395,7 +395,10 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
       // Continuar de todos modos
     }
     
-    const destino = numeroRegistrado ? numeroRegistrado._serialized : numero;
+    // Si numId tiene @c.us usarlo; si tiene @lid, preferir el número telefónico @c.us para evitar error de getChat
+    const destino = (numeroRegistrado && numeroRegistrado._serialized && !numeroRegistrado._serialized.includes('@lid'))
+      ? numeroRegistrado._serialized
+      : numero;
     
     try {
       await client.sendMessage(destino, mensaje, { sendSeen: false });
@@ -405,6 +408,21 @@ export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
       if (error.message?.includes('markedUnread') || error.message?.includes('sendSeen')) {
         console.log('✅ Mensaje enviado (sendSeen ignorado)');
         return { success: true, message: 'Mensaje enviado', telefono };
+      }
+
+      // Si falló por getChat o problema con LID, reintentar con el formato @c.us directo
+      if (destino !== numero || error.message?.includes('getChat') || error.message?.includes('No LID') || error.message?.includes('findChat')) {
+        console.warn(`⚠️ Error al enviar a ${destino} (${error.message}), reintentando con número directo ${numero}...`);
+        try {
+          await client.sendMessage(numero, mensaje, { sendSeen: false });
+          console.log('✅ Mensaje enviado en reintento');
+          return { success: true, message: 'Mensaje enviado', telefono };
+        } catch (e2) {
+          if (e2.message?.includes('markedUnread') || e2.message?.includes('sendSeen')) {
+            return { success: true, message: 'Mensaje enviado', telefono };
+          }
+          throw e2;
+        }
       }
       throw error;
     }
@@ -430,13 +448,13 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
     const numeroBase = formatearNumero(telefono); // ej: 59167958901@c.us
     console.log(`📤 Enviando PDF a ${numeroBase}...`);
 
-    // Obtener ID real del número (puede ser @c.us o @lid según el número)
+    // Obtener ID real del número
     let destino = numeroBase;
     try {
       const numId = await client.getNumberId(numeroBase.replace('@c.us', ''));
-      if (numId) {
-        // Usar el ID tal cual devuelve WhatsApp (NO forzar @c.us ni @lid)
-        destino = numId._serialized;
+      if (numId && numId._serialized) {
+        // Si es un @lid, usar el número base @c.us porque sendMessage con media a @lid suele fallar con getChat
+        destino = numId._serialized.includes('@lid') ? numeroBase : numId._serialized;
         console.log(`📱 Número verificado: ${destino}`);
       }
     } catch (e) { /* usar numero original */ }
@@ -475,18 +493,16 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
           return { success: true, message: 'PDF enviado correctamente', telefono };
         }
 
-        // Error "No LID for user": el número necesita formato @c.us directo
-        if (error.message?.includes('No LID for user')) {
-          console.warn(`⚠️ No LID error (intento ${intento}), cambiando a formato @c.us...`);
+        // Si el error es getChat, No LID, findChat o Evaluation failed, cambiar al número telefónico base @c.us y reintentar
+        if (
+          error.message?.includes('getChat') || 
+          error.message?.includes('No LID for user') || 
+          error.message?.includes('findChat') || 
+          error.message?.includes('new chat not found') ||
+          error.message?.includes('Evaluation failed')
+        ) {
+          console.warn(`⚠️ Error al enviar a ${destino} (${error.message}) en intento ${intento}. Cambiando a ${numeroBase}...`);
           destino = numeroBase; // Forzar el número de teléfono base @c.us
-          ultimoError = error;
-          continue;
-        }
-
-        // Error findChat: el chat no existe aún, reintentar con número base
-        if (error.message?.includes('findChat') || error.message?.includes('new chat not found')) {
-          console.warn(`⚠️ findChat error (intento ${intento}), reintentando con número base...`);
-          destino = numeroBase;
           ultimoError = error;
           continue;
         }
