@@ -3229,7 +3229,7 @@ export const enviarPDFPorWhatsAppWeb = async (req, res) => {
         telefono: compra.cliente_telefono
       });
     } else {
-      console.error('❌ Error al enviar PDF (desde servicio):', resultado.message, resultado.error);
+      console.error('❌ Error al enviar PDF (desde servicio):', resultado.message);
       res.status(500).json({
         success: false,
         message: resultado.message || 'Error al enviar el PDF',

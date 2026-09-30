@@ -481,6 +481,35 @@ const verificarParchesEnvio = async () => {
 };
 
 /**
+ * Confirma en el navegador que en el chat de destino haya un mensaje saliente reciente.
+ * sendMessage puede devolver undefined aunque el envío haya salido bien, así que esta
+ * es la única señal disponible para no dar por enviado algo que nunca salió.
+ */
+const confirmarEnvioEnChat = async (chatId) => {
+  if (!client || !client.pupPage) return null;
+  try {
+    return await client.pupPage.evaluate(async (chatId) => {
+      const chat = await window.WWebJS.getChat(chatId, { getAsModel: false });
+      if (!chat) return { sinChat: true, detalle: 'el chat no existe' };
+
+      const mensajes = typeof chat.msgs?.getModelsArray === 'function' ? chat.msgs.getModelsArray() : [];
+      const salientes = mensajes.filter((m) => m.id?.fromMe === true || m.self === 'out' || m.fromMe === true);
+      const ultimo = salientes[salientes.length - 1];
+
+      if (!ultimo) return { confirmado: false, detalle: 'sin mensajes salientes en el chat' };
+
+      const segundos = Number(ultimo.t) > 0 ? Math.round(Date.now() / 1000 - Number(ultimo.t)) : null;
+      return {
+        confirmado: segundos === null || (segundos >= 0 && segundos < 180),
+        detalle: `último saliente (${ultimo.type || 'media'}) ${segundos === null ? 'sin marca de tiempo' : `hace ~${segundos}s`}`
+      };
+    }, chatId);
+  } catch (_) {
+    return null;
+  }
+};
+
+/**
  * Envía un mensaje de texto
  */
 export const enviarMensajePorWhatsAppWeb = async (telefono, mensaje) => {
@@ -608,14 +637,28 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
           sendSeen: false
         });
 
-        // La librería devuelve undefined cuando no encontró el chat: no se envió nada
-        if (!enviado) {
-          const errorSinChat = new Error(`No se encontró el chat de ${destino}; WhatsApp todavía no lo tiene sincronizado`);
+        // La librería puede devolver undefined aunque el mensaje SÍ se haya enviado
+        // (no encuentra el modelo por su id), así que no se usa para decidir éxito o
+        // fallo: tratar ese undefined como error era lo que provocaba envíos repetidos.
+        const confirmacion = await confirmarEnvioEnChat(destino);
+
+        // Único caso que sí es un fallo real: el chat no existe, no se envió nada
+        if (!enviado && confirmacion?.sinChat) {
+          const errorSinChat = new Error(`No se encontró el chat de ${destino} en WhatsApp Web`);
           errorSinChat.reintentable = true;
           throw errorSinChat;
         }
 
-        console.log(`✅ PDF enviado a ${telefono}`);
+        const detalle = !confirmacion
+          ? 'sin datos de confirmación'
+          : confirmacion.confirmado
+            ? `confirmado: ${confirmacion.detalle}`
+            : `no confirmado: ${confirmacion.detalle}`;
+
+        console.log(enviado
+          ? `✅ PDF enviado a ${telefono} (${detalle})`
+          : `✅ PDF enviado a ${telefono} (la librería no devolvió el mensaje; ${detalle})`);
+
         return { success: true, message: 'PDF enviado correctamente', telefono };
 
       } catch (error) {
@@ -625,14 +668,15 @@ export const enviarPDFPorWhatsAppWeb = async (telefono, pdfPath, mensajeTexto = 
           return { success: true, message: 'PDF enviado correctamente', telefono };
         }
 
-        // Si el error es getChat, No LID, findChat o Evaluation failed, cambiar al número telefónico base @c.us y reintentar
+        // Solo se reintenta con los errores de búsqueda del chat, que ocurren ANTES de
+        // enviar. Un "Evaluation failed" puede producirse después de encolar el mensaje,
+        // y reintentarlo duplicaría el envío (el cliente recibiría el PDF varias veces).
         if (
           error.reintentable ||
           error.message?.includes('getChat') || 
           error.message?.includes('No LID for user') || 
           error.message?.includes('findChat') || 
-          error.message?.includes('new chat not found') ||
-          error.message?.includes('Evaluation failed')
+          error.message?.includes('new chat not found')
         ) {
           console.warn(`⚠️ Error al enviar a ${destino} (${error.message}) en intento ${intento}. Cambiando a ${numeroBase}...`);
           destino = numeroBase; // Forzar el número de teléfono base @c.us
