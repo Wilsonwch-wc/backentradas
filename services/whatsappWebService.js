@@ -71,18 +71,74 @@ const forzarInyeccionWWeb = async () => {
       return typeof window.Store !== 'undefined' && typeof window.WWebJS !== 'undefined' && typeof window.WWebJS.getChat === 'function';
     }).catch(() => false);
 
-    if (yaInyectado) return true;
+    if (!yaInyectado) {
+      // Inyectar Store y Utils de whatsapp-web.js directamente en el contexto del navegador
+      await client.pupPage.evaluate(ExposeStore).catch(() => {});
+      await client.pupPage.evaluate(LoadUtils).catch(() => {});
+    }
 
-    // Inyectar Store y Utils de whatsapp-web.js directamente en el contexto del navegador
-    await client.pupPage.evaluate(ExposeStore).catch(() => {});
-    await client.pupPage.evaluate(LoadUtils).catch(() => {});
-
-    // Aplicar parche sendSeen
+    // Parche crítico: asegurar que el remitente (meUser / lidUser) siempre tenga un Wid válido con propiedad 'id'
+    // Previene: "Data passed to getter must include an id property... but got undefined at getSender"
     await client.pupPage.evaluate(() => {
+      if (window.Store) {
+        const getFallbackWid = () => {
+          if (window.Store.Conn && window.Store.Conn.wid) {
+            return window.Store.Conn.wid;
+          }
+          if (window.Store.User && typeof window.Store.User.getMeUser === 'function') {
+            const me = window.Store.User.getMeUser();
+            if (me) return me;
+          }
+          const lastWid = window.localStorage?.getItem('last-wid-md');
+          if (lastWid && window.Store.WidFactory && typeof window.Store.WidFactory.createWid === 'function') {
+            try {
+              return window.Store.WidFactory.createWid(lastWid);
+            } catch (_) {}
+          }
+          return null;
+        };
+
+        if (window.Store.User) {
+          const origGetPn = window.Store.User.getMaybeMePnUser;
+          window.Store.User.getMaybeMePnUser = function() {
+            let res = null;
+            try {
+              if (typeof origGetPn === 'function') res = origGetPn.apply(this, arguments);
+            } catch (_) {}
+            return res || getFallbackWid();
+          };
+
+          const origGetLid = window.Store.User.getMaybeMeLidUser;
+          window.Store.User.getMaybeMeLidUser = function() {
+            let res = null;
+            try {
+              if (typeof origGetLid === 'function') res = origGetLid.apply(this, arguments);
+            } catch (_) {}
+            return res || getFallbackWid();
+          };
+        }
+      }
+
+      // Aplicar parche sendSeen
       if (window.WWebJS) {
         window.WWebJS.sendSeen = async () => true;
       }
     }).catch(() => {});
+
+    // Asegurar client.info si aún no está asignado
+    if (!client.info || !client.info.wid) {
+      try {
+        const infoData = await client.pupPage.evaluate(() => {
+          const wid = window.Store?.Conn?.wid || 
+                      (typeof window.Store?.User?.getMaybeMePnUser === 'function' && window.Store.User.getMaybeMePnUser()) ||
+                      (window.Store?.WidFactory && window.localStorage?.getItem('last-wid-md') ? window.Store.WidFactory.createWid(window.localStorage.getItem('last-wid-md')) : null);
+          return wid ? { wid } : null;
+        });
+        if (infoData && infoData.wid) {
+          client.info = infoData;
+        }
+      } catch (_) {}
+    }
 
     return true;
   } catch (e) {
