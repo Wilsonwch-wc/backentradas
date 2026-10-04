@@ -1,4 +1,6 @@
 import express from "express";
+import http from "http";
+import { Server as SocketIOServer } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
@@ -26,6 +28,8 @@ import { QR_EXPIRACION_MINUTOS, QR_AMBIENTE } from "./controllers/pagosControlle
 import cuponesRoutes from "./routes/cupones.js";
 import layoutRoutes from "./routes/layout.js";
 import db from "./config/db.js";
+import { inicializarRuletaSocket } from "./sockets/ruletaSocket.js";
+import { inicializarImpostorSocket } from "./sockets/impostorSocket.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,6 +39,20 @@ dotenv.config();
 
 const app = express();
 app.set("trust proxy", 1); // Confiar en Nginx/proxy reverso (fix X-Forwarded-For)
+const server = http.createServer(app);
+
+// Inicializar WebSockets para el juego de Ruleta
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  },
+  path: "/socket.io"
+});
+
+inicializarRuletaSocket(io);
+inicializarImpostorSocket(io);
+
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || "0.0.0.0";
 
@@ -239,7 +257,7 @@ cron.schedule("* * * * *", expirarPagosQRPendientes);
 console.log(`⏰ Cron activado: expirar pagos QR pendientes cada 1 min (limite: ${QR_EXPIRACION_MINUTOS} min)`);
 
 // Iniciar aplicación
-app.listen(PORT, HOST, async () => {
+server.listen(PORT, HOST, async () => {
   console.log("🚀 Iniciando backend...");
   console.log(`🌐 Backend corriendo en ${HOST}:${PORT}`);
   console.log(`📡 API disponible en ${HOST}:${PORT}/api`);
