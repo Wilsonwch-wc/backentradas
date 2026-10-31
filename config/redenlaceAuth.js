@@ -47,6 +47,8 @@ const CLIENT_SECRET = IS_PRODUCCION
 // ─────────────────────────────────────────────────────────────
 let _cachedToken = null;       // { access_token, expires_at }
 let _pendingRequest = null;    // Promise en vuelo para evitar peticiones paralelas
+let _lastOAuthError = null;    // Cache del error para no saturar en polling
+let _lastOAuthErrorTime = 0;
 
 /**
  * Obtiene un Access Token válido para Red Enlace.
@@ -59,6 +61,11 @@ export const getAccessToken = async () => {
   // Token válido con margen de 60s antes del vencimiento
   if (_cachedToken && _cachedToken.expires_at > Date.now() + 60_000) {
     return _cachedToken.access_token;
+  }
+
+  // Si hubo un error reciente (DNS/red/timeout), no repetir en cada segundo de polling
+  if (_lastOAuthError && Date.now() - _lastOAuthErrorTime < 5 * 60 * 1000) {
+    throw _lastOAuthError;
   }
 
   // Si ya hay una solicitud en vuelo, esperar que termine (evita tokens duplicados)
@@ -105,6 +112,9 @@ export const getAccessToken = async () => {
         expires_at: Date.now() + expiresIn * 1000,
       };
 
+      _lastOAuthError = null;
+      _lastOAuthErrorTime = 0;
+
       console.log(
         `[RedEnlace OAuth] ✅ Token obtenido. Tipo: ${token_type || 'Bearer'} | ` +
         `Expira en: ${Math.floor(expiresIn / 60)} min`
@@ -112,6 +122,10 @@ export const getAccessToken = async () => {
 
       return access_token;
 
+    } catch (err) {
+      _lastOAuthError = err;
+      _lastOAuthErrorTime = Date.now();
+      throw err;
     } finally {
       _pendingRequest = null;
     }
@@ -162,6 +176,8 @@ export const getAuthHeaders = async (extraHeaders = {}) => {
 export const invalidateToken = () => {
   console.warn('[RedEnlace OAuth] Token invalidado por 401. Se solicitará uno nuevo en el próximo uso.');
   _cachedToken = null;
+  _lastOAuthError = null;
+  _lastOAuthErrorTime = 0;
 };
 
 /**
