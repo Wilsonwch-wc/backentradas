@@ -14,7 +14,12 @@
 
 import axios from 'axios';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config();
 
 // ─────────────────────────────────────────────────────────────
@@ -115,19 +120,40 @@ export const getAccessToken = async () => {
   return _pendingRequest;
 };
 
+const QR_API_KEY = IS_PRODUCCION
+  ? process.env.QR_API_KEY_PROD
+  : process.env.QR_API_KEY_TEST;
+
 /**
- * Retorna headers completos con Bearer Token para usar en axios.
+ * Retorna headers completos con Bearer Token (OAuth 2.0) o fallback x-api-key para usar en axios.
  *
  * @param {Object} extraHeaders - Headers adicionales a mezclar.
  * @returns {Promise<Object>}
  */
 export const getAuthHeaders = async (extraHeaders = {}) => {
-  const token = await getAccessToken();
-  return {
-    Authorization: `Bearer ${token}`,
+  const headers = {
     'Content-Type': 'application/json',
     ...extraHeaders,
   };
+
+  if (QR_API_KEY) {
+    headers['x-api-key'] = QR_API_KEY;
+  }
+
+  try {
+    const token = await getAccessToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch (err) {
+    // Si OAuth falla pero tenemos x-api-key, usarlo como fallback transparente
+    if (!QR_API_KEY) {
+      throw err;
+    }
+    console.warn(`[RedEnlace Auth] Usando fallback x-api-key (${err.message})`);
+  }
+
+  return headers;
 };
 
 /**

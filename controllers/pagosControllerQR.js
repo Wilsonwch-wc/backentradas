@@ -57,6 +57,10 @@ const QR_API_URL = IS_PRODUCCION
   ? process.env.QR_API_URL_PROD
   : process.env.QR_API_URL_TEST;
 
+const QR_API_KEY = IS_PRODUCCION
+  ? process.env.QR_API_KEY_PROD
+  : process.env.QR_API_KEY_TEST;
+
 // NOTA: QR_API_KEY_* conservado como fallback durante período de transición
 // (Red Enlace podría seguir aceptando x-api-key hasta que migre completamente)
 const QR_WEBHOOK_SECRET = process.env.QR_WEBHOOK_SECRET || null;
