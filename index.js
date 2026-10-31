@@ -28,8 +28,6 @@ import { QR_EXPIRACION_MINUTOS, QR_AMBIENTE } from "./controllers/pagosControlle
 import cuponesRoutes from "./routes/cupones.js";
 import layoutRoutes from "./routes/layout.js";
 import db from "./config/db.js";
-import { inicializarRuletaSocket } from "./sockets/ruletaSocket.js";
-import { inicializarImpostorSocket } from "./sockets/impostorSocket.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -50,8 +48,6 @@ const io = new SocketIOServer(server, {
   path: "/socket.io"
 });
 
-inicializarRuletaSocket(io);
-inicializarImpostorSocket(io);
 
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || "0.0.0.0";
@@ -81,8 +77,8 @@ const compraLimiter = rateLimit({
 
 // Middlewares
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(generalLimiter);
 
 // Servir archivos estáticos (imágenes subidas)

@@ -1,6 +1,6 @@
 /**
  * pagosControllerQR.js
- * Integración con API QR Cobranza v1.7 — Redenlace ATC
+ * Integración con API QR Simple v2.0 — Red Enlace Open Hub
  *
  * URLs:
  *  TEST:  https://appcobranzacert.redenlace.com.bo/cobranza-0.0.1
@@ -11,9 +11,14 @@
  *  GET  /atc/verificaQr/{numeroReferencia}
  *  POST /qr/confirmed  ← nuestro callback
  *
+ * Autenticación (desde Oct 2026):
+ *  OAuth 2.0 Client Credentials → Authorization: Bearer <token>
+ *  (Migrado desde x-api-key — ver config/redenlaceAuth.js)
+ *
  * Checklist cubierto:
  *  ✅ Consumo API REST / JSON
- *  ✅ Header x-api-key en todas las peticiones
+ *  ✅ OAuth 2.0 Bearer Token en todas las peticiones
+ *  ✅ Renovación automática de token (cache + retry en 401)
  *  ✅ Endpoint Generar QR con campos correctos
  *  ✅ Endpoint Verificar Estado
  *  ✅ Conversión Base64 → imagen QR
@@ -33,6 +38,7 @@ import pool from '../config/db.js';
 import dotenv from 'dotenv';
 import { generarBoletoPDF } from '../services/boletoService.js';
 import { enviarBoletoPorEmail as enviarBoletoPorEmailService } from '../services/emailService.js';
+import { getAuthHeaders, invalidateToken } from '../config/redenlaceAuth.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -51,10 +57,8 @@ const QR_API_URL = IS_PRODUCCION
   ? process.env.QR_API_URL_PROD
   : process.env.QR_API_URL_TEST;
 
-const QR_API_KEY = IS_PRODUCCION
-  ? process.env.QR_API_KEY_PROD
-  : process.env.QR_API_KEY_TEST;
-
+// NOTA: QR_API_KEY_* conservado como fallback durante período de transición
+// (Red Enlace podría seguir aceptando x-api-key hasta que migre completamente)
 const QR_WEBHOOK_SECRET = process.env.QR_WEBHOOK_SECRET || null;
 
 // Tiempo de vigencia: configurable desde .env.
@@ -79,11 +83,11 @@ const RETRY_OPTIONS = {
 };
 
 // Log de arranque
-console.log(`🔐 Pasarela QR inicializada en ambiente: ${QR_AMBIENTE}`);
-if (!QR_API_URL || !QR_API_KEY) {
+console.log(`🔐 Pasarela QR inicializada en ambiente: ${QR_AMBIENTE} | Auth: OAuth 2.0`);
+if (!QR_API_URL) {
   console.warn(
-    `⚠️  [QR] Credenciales del ambiente ${QR_AMBIENTE} no configuradas. ` +
-    `Configura QR_API_URL_${IS_PRODUCCION ? 'PROD' : 'TEST'} y QR_API_KEY_${IS_PRODUCCION ? 'PROD' : 'TEST'} en .env`
+    `⚠️  [QR] URL del ambiente ${QR_AMBIENTE} no configurada. ` +
+    `Configura QR_API_URL_${IS_PRODUCCION ? 'PROD' : 'TEST'} en .env`
   );
 }
 
@@ -253,30 +257,45 @@ export const crearPagoQR = async (req, res) => {
 
     console.log(`[QR][${QR_AMBIENTE}] Generando QR. Ref: ${origenNumeroReferencia} | Monto: ${pagoData.monto} BOB | Tiempo: ${tiempoQrFinal}`);
 
-    // Llamada POST con reintentos — endpoint real de Redenlace
+    // Llamada POST con reintentos — endpoint real de Redenlace (OAuth 2.0)
     let response;
     try {
       response = await retry(async () => {
+        const headers = await getAuthHeaders();
         const r = await axios.post(
           `${QR_API_URL}/atc/generarQr`,
           pagoData,
-          {
-            headers: {
-              'x-api-key': QR_API_KEY,
-              'Content-Type': 'application/json'
-            },
-            timeout: 15000
-          }
+          { headers, timeout: 15000 }
         );
         return r;
       }, RETRY_OPTIONS);
     } catch (apiError) {
-      console.error('[QR] Error al llamar a Redenlace:', apiError.response?.data || apiError.message);
-      return res.status(502).json({
-        success: false,
-        message: 'No se pudo conectar con la pasarela de pagos. Intente nuevamente.',
-        error: apiError.response?.data || apiError.message
-      });
+      // Si fue un 401, invalidar el token y reintentar una vez más
+      if (apiError.response?.status === 401) {
+        invalidateToken();
+        try {
+          const headers = await getAuthHeaders();
+          response = await axios.post(
+            `${QR_API_URL}/atc/generarQr`,
+            pagoData,
+            { headers, timeout: 15000 }
+          );
+        } catch (retryError) {
+          console.error('[QR] Error tras renovar token:', retryError.response?.data || retryError.message);
+          return res.status(502).json({
+            success: false,
+            message: 'No se pudo autenticar con la pasarela de pagos.',
+            error: retryError.response?.data || retryError.message
+          });
+        }
+      } else {
+        console.error('[QR] Error al llamar a Redenlace:', apiError.response?.data || apiError.message);
+        return res.status(502).json({
+          success: false,
+          message: 'No se pudo conectar con la pasarela de pagos. Intente nuevamente.',
+          error: apiError.response?.data || apiError.message
+        });
+      }
     }
 
     // Respuesta de Redenlace:
@@ -466,15 +485,13 @@ export const verificarEstadoPagoQR = async (req, res) => {
     // Consultar estado real en Redenlace (usando referencia ATC)
     const refParaConsulta = pago.atc_referencia || pago.external_reference;
 
-    if (QR_API_URL && QR_API_KEY && refParaConsulta) {
+    if (QR_API_URL && refParaConsulta) {
       try {
         const response = await retry(async () => {
+          const headers = await getAuthHeaders();
           return await axios.get(
             `${QR_API_URL}/atc/verificaQr/${refParaConsulta}`,
-            {
-              headers: { 'x-api-key': QR_API_KEY },
-              timeout: 10000
-            }
+            { headers, timeout: 10000 }
           );
         }, { ...RETRY_OPTIONS, retries: 2 });
 
