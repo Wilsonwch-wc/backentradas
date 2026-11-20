@@ -21,7 +21,7 @@ router.post('/generar', verifyToken, crearPagoQR);
 
 // ─── Req 8: Consulta de estado del QR ────────────────────────────────────────
 // GET /qr/verificaQr/:numeroReferencia
-// Req 2: incluye x-api-key en la petición a la pasarela internamente
+// Internamente consulta la API QR Simple v2.0 de Open Hub (OAuth 2.0)
 router.get('/verificaQr/:numeroReferencia', verifyToken, verificarEstadoPagoQR);
 
 export default router;

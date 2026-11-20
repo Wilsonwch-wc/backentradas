@@ -2,30 +2,36 @@
  * pagosControllerQR.js
  * Integración con API QR Simple v2.0 — Red Enlace Open Hub
  *
- * URLs:
- *  TEST:  https://appcobranzacert.redenlace.com.bo/cobranza-0.0.1
- *  PROD:  https://appcobranza.redenlace.com.bo/cobranza-0.0.1
+ * Comunicado oficial Red Enlace / Open Hub (plazo 31/10/2026):
+ *  - Autenticación unificada OAuth 2.0
+ *  - QR Simple pasa a v2.0 con URLs y campos nuevos (las versiones anteriores
+ *    quedaron deprecadas)
  *
- * Endpoints:
- *  POST /atc/generarQr
- *  GET  /atc/verificaQr/{numeroReferencia}
- *  POST /qr/confirmed  ← nuestro callback
+ * URLs v2 (Open Hub):
+ *  TEST:  https://atcgwapitest.redenlace.com.bo/sandbox
+ *  PROD:  https://api.redenlace.com.bo
  *
- * Autenticación (desde Oct 2026):
- *  OAuth 2.0 Client Credentials → Authorization: Bearer <token>
- *  (Migrado desde x-api-key — ver config/redenlaceAuth.js)
+ * Endpoints v2:
+ *  POST /qr/simple/v2/generate
+ *  GET  /qr/simple/v2/verify/{numeroReferencia}
+ *  POST /qr/simple/v2/cancel/{numeroReferencia}
+ *  POST /qr/confirmed  ← nuestro callback (se registra en cada QR con "webhook")
+ *
+ * Request v2 (reemplaza al formato antiguo con PIPE en la glosa):
+ *  numeroReferencia (string) · glosa (texto plano) · monto · moneda ·
+ *  vigencia (segundos) · idEstablecimiento · nombreEstablecimiento · webhook {url, key, value}
  *
  * Checklist cubierto:
  *  ✅ Consumo API REST / JSON
  *  ✅ OAuth 2.0 Bearer Token en todas las peticiones
  *  ✅ Renovación automática de token (cache + retry en 401)
- *  ✅ Endpoint Generar QR con campos correctos
- *  ✅ Endpoint Verificar Estado
+ *  ✅ Generar QR v2 con los campos nuevos (glosa plana + establecimiento + vigencia + webhook)
+ *  ✅ Verificar estado v2
  *  ✅ Conversión Base64 → imagen QR
- *  ✅ Callback público /qr/confirmed
+ *  ✅ Callback público /qr/confirmed (registrado en el propio QR)
  *  ✅ Recepción y respuesta del callback (codigoRespuesta 00/05)
- *  ✅ Manejo de todos los estados (INITIALIZE, PENDING, SUCCESS, CLOSED, EXPIRED, CANCELLED, ERROR, NOTFOUND)
- *  ✅ Estados del callback: 00=aprobado, 03=expirado, 05=inválido
+ *  ✅ Manejo de estados v2 (PENDIENTE, PAGADO, CANCELADO, EXPIRADO, ERROR)
+ *  ✅ Compatibilidad con los estados antiguos (00/03/05, SUCCESS, CLOSED, ...)
  *  ✅ Credenciales diferenciadas TEST / PRODUCCION
  *  ✅ Reintentos automáticos con backoff exponencial
  *  ✅ Registro del pago en BD (origenNumeroReferencia + atcReferencia)
@@ -53,17 +59,31 @@ dotenv.config();
 const QR_AMBIENTE = (process.env.QR_AMBIENTE || 'TEST').toUpperCase();
 const IS_PRODUCCION = QR_AMBIENTE === 'PRODUCCION' || QR_AMBIENTE === 'PROD';
 
-const QR_API_URL = IS_PRODUCCION
-  ? process.env.QR_API_URL_PROD
-  : process.env.QR_API_URL_TEST;
+// Base de la API QR Simple v2.0 (Open Hub).
+// Si el .env del servidor no tiene las variables nuevas, se usan las URLs oficiales v2.
+const QR_API_URL = (IS_PRODUCCION
+  ? (process.env.QR_API_URL_V2_PROD || 'https://api.redenlace.com.bo')
+  : (process.env.QR_API_URL_V2_TEST || 'https://atcgwapitest.redenlace.com.bo/sandbox')
+).replace(/\/+$/, '');
 
-const QR_API_KEY = IS_PRODUCCION
-  ? process.env.QR_API_KEY_PROD
-  : process.env.QR_API_KEY_TEST;
+// NOTA: la v2 usa solo OAuth 2.0. QR_API_KEY_* se conserva únicamente como fallback
+// de transición dentro de config/redenlaceAuth.js.
 
-// NOTA: QR_API_KEY_* conservado como fallback durante período de transición
-// (Red Enlace podría seguir aceptando x-api-key hasta que migre completamente)
+// Rutas de la API QR Simple v2.0
+const QR_PATH_GENERAR   = '/qr/simple/v2/generate';
+const QR_PATH_VERIFICAR = '/qr/simple/v2/verify';
+const QR_PATH_CANCELAR  = '/qr/simple/v2/cancel';
+
+// Establecimiento registrado en Red Enlace (antes codigoSucursal / nombreSucursal)
+const QR_ID_ESTABLECIMIENTO = process.env.QR_ID_ESTABLECIMIENTO || '461116';
+const QR_NOMBRE_ESTABLECIMIENTO = process.env.QR_NOMBRE_ESTABLECIMIENTO || 'PLUSTIKET API QR';
+
+// NOTA: QR_API_KEY_* conservado solo como fallback de transición; la v2 usa OAuth 2.0.
 const QR_WEBHOOK_SECRET = process.env.QR_WEBHOOK_SECRET || null;
+
+// URL pública HTTPS de nuestro callback. La pasarela la registra en cada QR y la
+// llama cuando el cliente paga. Si no está configurada se arma con el host de la petición.
+const QR_WEBHOOK_URL = (process.env.QR_WEBHOOK_URL || '').trim();
 
 // Tiempo de vigencia: configurable desde .env.
 // Por defecto 15 minutos (ideal para pruebas). En producción cambia QR_EXPIRACION_MINUTOS=1440 (24h).
@@ -87,11 +107,11 @@ const RETRY_OPTIONS = {
 };
 
 // Log de arranque
-console.log(`🔐 Pasarela QR inicializada en ambiente: ${QR_AMBIENTE} | Auth: OAuth 2.0`);
-if (!QR_API_URL) {
+console.log(`🔐 Pasarela QR v2.0 inicializada. Ambiente: ${QR_AMBIENTE} | API: ${QR_API_URL} | Auth: OAuth 2.0`);
+if (!QR_WEBHOOK_URL) {
   console.warn(
-    `⚠️  [QR] URL del ambiente ${QR_AMBIENTE} no configurada. ` +
-    `Configura QR_API_URL_${IS_PRODUCCION ? 'PROD' : 'TEST'} en .env`
+    '⚠️  [QR] QR_WEBHOOK_URL no configurada: se usará el host de cada petición. ' +
+    'Configúrala en .env con la URL pública HTTPS de /qr/confirmed.'
   );
 }
 
@@ -100,52 +120,66 @@ if (!QR_API_URL) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Estados del CALLBACK (campo "estado"):
- *   00 = QR aprobado
- *   03 = QR expirado
- *   05 = QR inválido
+ * Traduce el estado de la pasarela a nuestro estado local.
+ * v2 (Open Hub) usa: PENDIENTE, PAGADO, CANCELADO, EXPIRADO, ERROR
+ * v1 (legacy) usaba: 00/03/05 y SUCCESS, CLOSED, EXPIRED, CANCELLED, ERROR, NOTFOUND
  */
-const mapearEstadoCallback = (estado) => {
-  const est = (estado || '').toString().trim();
-  if (est === '00') return 'approved';
-  if (est === '03') return 'expired';
-  if (est === '05') return 'rejected';
-  return 'pending';
+const mapearEstadoPasarela = (valor) => {
+  const est = (valor ?? '').toString().trim().toUpperCase();
+  if (['00', 'PAGADO', 'PAGADA', 'SUCCESS', 'CLOSED', 'APROBADO'].includes(est)) return 'approved';
+  if (['03', 'EXPIRADO', 'EXPIRED'].includes(est)) return 'expired';
+  if (['CANCELADO', 'CANCELLED'].includes(est)) return 'cancelled';
+  if (['05', 'ERROR', 'NOTFOUND', 'RECHAZADO', 'RECHAZADA', 'INVALIDO', 'INVÁLIDO'].includes(est)) return 'rejected';
+  return 'pending'; // PENDIENTE / PROCESANDO / INITIALIZE
 };
 
 /**
- * Estados del VERIFICAR QR (campo "codigoRespuesta"):
- *   INITIALIZE → pending
- *   PENDING    → pending
- *   SUCCESS    → approved
- *   CLOSED     → approved  (transacción finalizada con éxito)
- *   EXPIRED    → expired
- *   CANCELLED  → cancelled
- *   ERROR      → rejected
- *   NOTFOUND   → rejected
- */
-const mapearEstadoVerificacion = (codigoRespuesta) => {
-  const est = (codigoRespuesta || '').toString().trim().toUpperCase();
-  if (est === 'SUCCESS' || est === 'CLOSED') return 'approved';
-  if (est === 'EXPIRED') return 'expired';
-  if (est === 'CANCELLED') return 'cancelled';
-  if (est === 'ERROR' || est === 'NOTFOUND') return 'rejected';
-  return 'pending'; // INITIALIZE, PENDING
-};
-
-/**
- * Genera un número de referencia único de máx 9 dígitos.
- * Usa los últimos 9 dígitos del timestamp en segundos.
+ * Genera un número de referencia único de máx 9 dígitos (la v2 exige dígitos y ≤ i32::MAX).
+ * Usa los últimos 9 dígitos del timestamp en milisegundos para no repetir el número
+ * cuando se generan dos QR dentro del mismo segundo.
  */
 const generarNumeroReferencia = () => {
-  const ts = Math.floor(Date.now() / 1000).toString().slice(-9);
-  return parseInt(ts, 10);
+  return parseInt(Date.now().toString().slice(-9), 10);
 };
 
 /**
- * Trunca campoExtra a máximo 50 caracteres (límite de la API).
+ * Glosa v2: texto plano visible para el pagador. Ya no se usa el formato antiguo
+ * codSucursal|nombreSucursal|rubro|detalle (por eso el proveedor la rechazaba).
  */
-const truncarCampoExtra = (texto) => (texto || '').substring(0, 50);
+const sanitizarGlosa = (texto) => {
+  const limpio = (texto || 'Compra de entradas')
+    .toString()
+    .replace(/[|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return limpio.substring(0, 60) || 'Compra de entradas';
+};
+
+/**
+ * El campo "qr" de la v2 puede venir como base64 puro o como data URI.
+ * El frontend arma el src como data:image/png;base64,<imagen>, así que se deja solo el base64.
+ */
+const normalizarQrBase64 = (valor) => {
+  if (!valor || typeof valor !== 'string') return null;
+  return valor.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, '').trim() || null;
+};
+
+/**
+ * Datos del webhook que la pasarela usa para notificar el pago (obligatorio en la v2).
+ * Se prefiere QR_WEBHOOK_URL; si no está, se arma con el host público de la petición.
+ */
+const construirWebhook = (req) => {
+  let url = QR_WEBHOOK_URL;
+  if (!url) {
+    const host = req.get('x-forwarded-host') || req.get('host');
+    const proto = (req.get('x-forwarded-proto') || req.protocol || 'https')
+      .split(',')[0]
+      .trim();
+    url = `${proto}://${host}/qr/confirmed`;
+  }
+  // key/value = header y secreto que la pasarela enviará de vuelta en cada notificación
+  return { url, key: 'x-api-key', value: QR_WEBHOOK_SECRET || '' };
+};
 
 /**
  * Genera un código de escaneo único para boletos (5 dígitos).
@@ -178,7 +212,7 @@ const generarCodigoEscaneo = async (connection) => {
 
 // ─────────────────────────────────────────────────────────────
 // POST /qr/generar — Genera QR de cobro
-// Endpoint Redenlace: POST /atc/generarQr
+// Endpoint Redenlace v2: POST /qr/simple/v2/generate
 // ─────────────────────────────────────────────────────────────
 export const crearPagoQR = async (req, res) => {
   try {
@@ -187,11 +221,7 @@ export const crearPagoQR = async (req, res) => {
       eventoId,
       cantidad,
       total,
-      descripcion,
-      // Glosa: valores registrados por Redenlace para Plustiket
-      codigoSucursal = '461116',
-      nombreSucursal = 'PLUSTIKET API QR',
-      rubroComercio  = '7922'
+      descripcion
     } = req.body;
 
     const userId = req.user.id;
@@ -203,71 +233,75 @@ export const crearPagoQR = async (req, res) => {
       });
     }
 
-    if (!QR_API_URL || !QR_API_KEY) {
+    if (!QR_API_URL) {
       return res.status(503).json({
         success: false,
         message: `Pasarela QR no configurada para el ambiente ${QR_AMBIENTE}. Contacte al administrador.`
       });
     }
 
-    // Referencia única nuestra (máx 9 dígitos)
+    // Referencia única nuestra (máx 9 dígitos, la v2 la recibe como string)
     const origenNumeroReferencia = generarNumeroReferencia();
 
-    // Glosa: codigoSucursal|nombreSucursal|rubroComercio|detalleCompra
-    const detalleCompra = (descripcion || 'Compra de entradas').substring(0, 40);
-    const glosa = `${codigoSucursal}|${nombreSucursal}|${rubroComercio}|${detalleCompra}`;
+    // Glosa v2: texto plano (sin el formato antiguo codSucursal|nombreSucursal|rubro|detalle)
+    const glosa = sanitizarGlosa(descripcion);
 
-    // campoExtra: máx 50 caracteres
-    const campoExtraBase = compra_id
-      ? `c${compra_id}e${eventoId}u${userId}`
-      : `e${eventoId}u${userId}`;
-    const campoExtra = truncarCampoExtra(campoExtraBase);
-
-    // Calcular tiempo restante real si es una compra existente
+    // Vigencia en segundos (la v2 reemplazó tiempoQr "HH:MM:SS" por vigencia)
+    let vigenciaSegundos = QR_EXPIRACION_MINUTOS * 60;
     let tiempoQrFinal = QR_TIEMPO_VIGENCIA;
     if (compra_id) {
       const [compras] = await pool.execute('SELECT fecha_compra FROM compras WHERE id = ?', [compra_id]);
       if (compras.length > 0) {
         const fechaCompra = new Date(compras[0].fecha_compra);
-        const ahora = new Date();
-        const diferenciaMs = ahora - fechaCompra;
-        const minutosTranscurridos = Math.floor(diferenciaMs / 60000);
-        const segundosRestantes = (QR_EXPIRACION_MINUTOS * 60) - Math.floor(diferenciaMs / 1000);
+        const diferenciaMs = Date.now() - fechaCompra.getTime();
+        vigenciaSegundos = (QR_EXPIRACION_MINUTOS * 60) - Math.floor(diferenciaMs / 1000);
 
-        if (segundosRestantes <= 0) {
+        if (vigenciaSegundos <= 0) {
           return res.status(400).json({
             success: false,
             message: 'El tiempo para pagar esta compra ha expirado. La compra será cancelada automáticamente.'
           });
         }
 
-        const hh = String(Math.floor(segundosRestantes / 3600)).padStart(2, '0');
-        const mm = String(Math.floor((segundosRestantes % 3600) / 60)).padStart(2, '0');
-        const ss = String(segundosRestantes % 60).padStart(2, '0');
+        const hh = String(Math.floor(vigenciaSegundos / 3600)).padStart(2, '0');
+        const mm = String(Math.floor((vigenciaSegundos % 3600) / 60)).padStart(2, '0');
+        const ss = String(vigenciaSegundos % 60).padStart(2, '0');
         tiempoQrFinal = `${hh}:${mm}:${ss}`;
       }
     }
 
-    // Payload según especificación v1.7
+    // Payload según especificación API QR Simple v2.0 (Open Hub)
+    const idEstablecimientoNum = Number(QR_ID_ESTABLECIMIENTO);
     const pagoData = {
-      numeroReferencia: origenNumeroReferencia,
+      numeroReferencia: origenNumeroReferencia.toString(),
       glosa,
       monto: parseFloat(parseFloat(total).toFixed(2)),
       moneda: 'BOB',
-      canal: 'WEB',
-      tiempoQr: tiempoQrFinal,
-      campoExtra
+      vigencia: vigenciaSegundos,
+      idEstablecimiento: Number.isFinite(idEstablecimientoNum) ? idEstablecimientoNum : QR_ID_ESTABLECIMIENTO,
+      nombreEstablecimiento: QR_NOMBRE_ESTABLECIMIENTO,
+      webhook: construirWebhook(req)
     };
 
-    console.log(`[QR][${QR_AMBIENTE}] Generando QR. Ref: ${origenNumeroReferencia} | Monto: ${pagoData.monto} BOB | Tiempo: ${tiempoQrFinal}`);
+    // Log con el payload exacto que se envía (sin exponer el secreto del webhook)
+    const payloadParaLog = {
+      ...pagoData,
+      webhook: {
+        url: pagoData.webhook.url,
+        key: pagoData.webhook.key,
+        value: pagoData.webhook.value ? '***' : ''
+      }
+    };
+    console.log(`[QR][${QR_AMBIENTE}] QR v2 → POST ${QR_API_URL}${QR_PATH_GENERAR}`);
+    console.log(`[QR][${QR_AMBIENTE}] QR v2 → payload: ${JSON.stringify(payloadParaLog)}`);
 
-    // Llamada POST con reintentos — endpoint real de Redenlace (OAuth 2.0)
+    // Llamada POST con reintentos — endpoint v2 de Open Hub (OAuth 2.0)
     let response;
     try {
       response = await retry(async () => {
         const headers = await getAuthHeaders();
         const r = await axios.post(
-          `${QR_API_URL}/atc/generarQr`,
+          `${QR_API_URL}${QR_PATH_GENERAR}`,
           pagoData,
           { headers, timeout: 15000 }
         );
@@ -280,7 +314,7 @@ export const crearPagoQR = async (req, res) => {
         try {
           const headers = await getAuthHeaders();
           response = await axios.post(
-            `${QR_API_URL}/atc/generarQr`,
+            `${QR_API_URL}${QR_PATH_GENERAR}`,
             pagoData,
             { headers, timeout: 15000 }
           );
@@ -302,11 +336,12 @@ export const crearPagoQR = async (req, res) => {
       }
     }
 
-    // Respuesta de Redenlace:
-    // { moneda, monto, origenNumeroReferencia, numeroReferencia (ATC), codigoRespuesta: "PENDING", imagen: "base64..." }
-    const respuesta = response.data;
-    const atcReferencia = respuesta.numeroReferencia?.toString() || null;
-    const imagen = respuesta.imagen || null;
+    // Respuesta v2:
+    // { numeroReferencia (ATC), numeroReferenciaOriginante (nuestra), estado: "PENDIENTE",
+    //   qr: "base64...", monto, moneda, fechaExpiracion }
+    const respuesta = response.data || {};
+    const atcReferencia = (respuesta.numeroReferencia ?? respuesta.numeroReferenciaOriginante ?? null)?.toString() || null;
+    const imagen = normalizarQrBase64(respuesta.qr || respuesta.imagen);
 
     if (!imagen) {
       console.error('[QR] Redenlace no devolvió imagen Base64:', respuesta);
@@ -317,8 +352,14 @@ export const crearPagoQR = async (req, res) => {
       });
     }
 
-    console.log(`[QR][${QR_AMBIENTE}] QR generado. ` +
-      `OrigenRef: ${origenNumeroReferencia} | ATC Ref: ${atcReferencia} | Estado: ${respuesta.codigoRespuesta}`);
+    const estadoPasarela = respuesta.estado || respuesta.codigoRespuesta || 'PENDIENTE';
+
+    console.log(
+      `[QR][${QR_AMBIENTE}] QR v2 ← respuesta: numeroReferencia=${atcReferencia} | ` +
+      `originante=${respuesta.numeroReferenciaOriginante ?? '-'} | estado=${estadoPasarela} | ` +
+      `qr=${imagen ? `${Math.round(imagen.length / 1024)}KB base64` : 'ausente'} | ` +
+      `monto=${respuesta.monto ?? pagoData.monto} ${respuesta.moneda || 'BOB'}`
+    );
 
     // Guardar en BD: almacenamos AMBAS referencias
     const [result] = await pool.execute(
@@ -350,7 +391,7 @@ export const crearPagoQR = async (req, res) => {
         tiempoQr: tiempoQrFinal,
         moneda: 'BOB',
         monto: parseFloat(total),
-        estadoPasarela: respuesta.codigoRespuesta, // PENDING
+        estadoPasarela, // v2: PENDIENTE
         status: 'pending'
       },
       message: 'Código QR de pago generado exitosamente'
@@ -385,58 +426,79 @@ export const webhookQR = async (req, res) => {
         req.headers['x-api-key'] ||
         req.headers['authorization']?.replace('Bearer ', '') || '';
       if (firmaRecibida !== QR_WEBHOOK_SECRET) {
-        console.warn('[QR] Webhook rechazado: firma inválida');
+        console.warn(
+          `[QR] Webhook rechazado: firma inválida (headers recibidos: ${Object.keys(req.headers).join(', ')})`
+        );
         return res.status(401).json(
           respuestaError(req.body?.numeroReferencia, 'Firma inválida')
         );
       }
     }
 
-    // Campos del callback Redenlace:
-    // { numeroReferencia (ATC), estado: "00"|"03"|"05", transacciones: {...} }
-    const { numeroReferencia, estado, transacciones } = req.body;
+    // Campos del callback:
+    //  v2: { numeroReferencia, numeroReferenciaOriginante, estado: "PAGADO"|"PENDIENTE"|...,
+    //        monto|importe, moneda, codigoRespuesta, detalleRespuesta|mensaje, clienteOrigen, bancoOrigen }
+    //  v1: { numeroReferencia, estado: "00"|"03"|"05", transacciones: {...} }
+    const {
+      numeroReferencia,
+      numeroReferenciaOriginante,
+      estado,
+      codigoRespuesta,
+      transacciones,
+      detalleRespuesta,
+      mensaje
+    } = req.body;
 
-    if (!numeroReferencia || estado === undefined || estado === null) {
+    // La pasarela puede mandar el resultado en "estado" o en "codigoRespuesta"
+    const codigo = codigoRespuesta ?? estado;
+
+    if ((!numeroReferencia && !numeroReferenciaOriginante) || codigo === undefined || codigo === null) {
       return res.status(400).json(
-        respuestaError(numeroReferencia, 'Faltan parámetros: numeroReferencia, estado')
+        respuestaError(numeroReferencia || numeroReferenciaOriginante, 'Faltan parámetros: numeroReferencia, estado/codigoRespuesta')
       );
     }
 
-    console.log(`[QR][${QR_AMBIENTE}] Callback recibido. ATC Ref: ${numeroReferencia} | Estado: ${estado}`);
-
-    // Buscar el pago por la referencia ATC (atc_referencia)
-    // También intentar por external_reference como fallback
-    let [pagos] = await pool.execute(
-      `SELECT * FROM pagos WHERE atc_referencia = ? LIMIT 1`,
-      [numeroReferencia.toString()]
+    console.log(
+      `[QR][${QR_AMBIENTE}] Callback recibido. Ref: ${numeroReferencia} | Originante: ${numeroReferenciaOriginante || '-'} | ` +
+      `Estado: ${codigo}${detalleRespuesta || mensaje ? ` (${detalleRespuesta || mensaje})` : ''}`
     );
 
-    if (pagos.length === 0) {
-      // Fallback: buscar por nuestra referencia
-      [pagos] = await pool.execute(
+    // Buscar el pago por cualquiera de las dos referencias (ATC u originante/nuestra)
+    const candidatas = [numeroReferencia, numeroReferenciaOriginante]
+      .filter((r) => r !== undefined && r !== null && r !== '')
+      .map((r) => r.toString());
+
+    let pago = null;
+    for (const ref of candidatas) {
+      const [porAtc] = await pool.execute(
+        `SELECT * FROM pagos WHERE atc_referencia = ? LIMIT 1`,
+        [ref]
+      );
+      if (porAtc.length > 0) { pago = porAtc[0]; break; }
+
+      const [porExterna] = await pool.execute(
         `SELECT * FROM pagos WHERE external_reference = ? LIMIT 1`,
-        [numeroReferencia.toString()]
+        [ref]
       );
+      if (porExterna.length > 0) { pago = porExterna[0]; break; }
     }
 
-    if (pagos.length === 0) {
-      console.warn(`[QR] Pago no encontrado. ATC Ref: ${numeroReferencia}`);
+    if (!pago) {
+      console.warn(`[QR] Pago no encontrado. Ref: ${candidatas.join(' / ')}`);
       return res.status(404).json(
-        respuestaError(numeroReferencia, 'Número de referencia no encontrado')
+        respuestaError(numeroReferencia || numeroReferenciaOriginante, 'Número de referencia no encontrado')
       );
     }
 
-    const pago = pagos[0];
-
-    // Mapear estado del callback (00, 03, 05)
-    const nuevoEstado = mapearEstadoCallback(estado);
+    // Mapear estado del callback (v2: PAGADO/PENDIENTE/... · v1: 00/03/05)
+    const nuevoEstado = mapearEstadoPasarela(codigo);
 
     await pool.execute(
       `UPDATE pagos SET estado = ?, updated_at = NOW() WHERE id = ?`,
       [nuevoEstado, pago.id]
     );
 
-    console.log(`[QR] Pago ${pago.id} → estado: ${nuevoEstado} (código pasarela: ${estado})`);
+    console.log(`[QR] Pago ${pago.id} → estado: ${nuevoEstado} (estado pasarela: ${codigo})`);
 
     // Si se aprobó y aún no estaba procesado → generar entradas
     if (nuevoEstado === 'approved' && pago.estado !== 'approved') {
@@ -447,9 +509,9 @@ export const webhookQR = async (req, res) => {
       }
     }
 
-    // Respuesta obligatoria para Redenlace
+    // Respuesta obligatoria para Redenlace (se responde con NUESTRA referencia originante si vino)
     return res.status(200).json({
-      numeroReferencia: numeroReferencia.toString(),
+      numeroReferencia: (numeroReferenciaOriginante || numeroReferencia).toString(),
       codigoRespuesta: '00',
       detalleRespuesta: null
     });
@@ -464,7 +526,7 @@ export const webhookQR = async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // GET /qr/verificaQr/:numeroReferencia — Consulta estado
-// Endpoint Redenlace: GET /atc/verificaQr/{numeroReferencia}
+// Endpoint Redenlace v2: GET /qr/simple/v2/verify/{numeroReferencia}
 // ─────────────────────────────────────────────────────────────
 export const verificarEstadoPagoQR = async (req, res) => {
   try {
@@ -486,26 +548,59 @@ export const verificarEstadoPagoQR = async (req, res) => {
 
     const pago = pagos[0];
 
-    // Consultar estado real en Redenlace (usando referencia ATC)
-    const refParaConsulta = pago.atc_referencia || pago.external_reference;
+    // Consultar estado real en Redenlace. Se prueba primero la referencia ATC y, si la
+    // pasarela no la encuentra, la nuestra: la v2 devuelve numeroReferencia (ATC) y
+    // numeroReferenciaOriginante (nuestra), así que cubrimos ambas nomenclaturas.
+    const refsParaConsultar = [...new Set(
+      [pago.atc_referencia, pago.external_reference]
+        .filter((r) => r !== null && r !== undefined && r !== '')
+        .map(String)
+    )];
 
-    if (QR_API_URL && refParaConsulta) {
+    if (QR_API_URL && refsParaConsultar.length > 0) {
       try {
-        const response = await retry(async () => {
-          const headers = await getAuthHeaders();
-          return await axios.get(
-            `${QR_API_URL}/atc/verificaQr/${refParaConsulta}`,
-            { headers, timeout: 10000 }
-          );
-        }, { ...RETRY_OPTIONS, retries: 2 });
+        let response = null;
+        let refParaConsulta = refsParaConsultar[0];
+        let ultimoErrorConsulta = null;
 
-        // Respuesta: { codigoRespuesta: "CLOSED"|"PENDING"|..., detalleRespuesta, estados: [...], transacciones: {...} }
-        const respuesta = response.data;
-        const nuevoEstado = mapearEstadoVerificacion(respuesta.codigoRespuesta);
+        for (const ref of refsParaConsultar) {
+          try {
+            response = await retry(async () => {
+              const headers = await getAuthHeaders();
+              return await axios.get(
+                `${QR_API_URL}${QR_PATH_VERIFICAR}/${ref}`,
+                { headers, timeout: 10000 }
+              );
+            }, {
+              ...RETRY_OPTIONS,
+              retries: 2,
+              // 4xx no se reintenta: si no existe con esa referencia, se prueba la otra
+              bail: (e) => Boolean(e.response && e.response.status >= 400 && e.response.status < 500)
+            });
+            refParaConsulta = ref;
+            break;
+          } catch (consultaError) {
+            ultimoErrorConsulta = consultaError;
+            const codigo = consultaError.response?.data?.errors?.[0]?.code;
+            const noEncontrada = consultaError.response?.status === 404 || codigo === 'TRANSACCION_NO_ENCONTRADA';
+            if (!noEncontrada) throw consultaError;
+            console.warn(`[QR] Referencia ${ref} no encontrada en la pasarela; probando la otra...`);
+          }
+        }
+
+        if (!response) throw ultimoErrorConsulta;
+
+        // Respuesta v2: { numeroReferencia, estado: "PENDIENTE"|"PAGADO"|...,
+        //                 mensaje, importe|monto, moneda, clienteOrigen, bancoOrigen }
+        // (compatibilidad con v1: codigoRespuesta + transacciones)
+        const respuesta = response.data || {};
+        const estadoBruto = respuesta.estado || respuesta.codigoRespuesta;
+        const detalleBruto = respuesta.mensaje || respuesta.detalleRespuesta || null;
+        const nuevoEstado = mapearEstadoPasarela(estadoBruto);
 
         // Solo loguear cuando el estado cambia (evitar spam en consola)
         if (nuevoEstado !== pago.estado) {
-          console.log(`[QR][${QR_AMBIENTE}] Estado actualizado. ATC Ref: ${refParaConsulta} | ${pago.estado} → ${nuevoEstado}`);
+          console.log(`[QR][${QR_AMBIENTE}] Estado actualizado. Ref: ${refParaConsulta} | ${pago.estado} → ${nuevoEstado} (pasarela: ${estadoBruto})`);
         }
 
         if (nuevoEstado !== pago.estado) {
@@ -533,9 +628,9 @@ export const verificarEstadoPagoQR = async (req, res) => {
             origenNumeroReferencia: pago.external_reference,
             atcReferencia: pago.atc_referencia,
             estado: pago.estado,
-            estadoPasarela: respuesta.codigoRespuesta,
-            detallePasarela: respuesta.detalleRespuesta,
-            historialEstados: respuesta.estados || [],
+            estadoPasarela: estadoBruto,
+            detallePasarela: detalleBruto,
+            historialEstados: respuesta.historialEstados || respuesta.estados || [],
             monto: pago.monto_total,
             createdAt: pago.created_at,
             updatedAt: pago.updated_at

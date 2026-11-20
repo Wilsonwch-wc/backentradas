@@ -259,13 +259,14 @@ server.listen(PORT, HOST, async () => {
   console.log(`📡 API disponible en ${HOST}:${PORT}/api`);
   console.log(`🔐 Pasarela QR - Ambiente activo: ${QR_AMBIENTE}`);
 
-  // Validación de credenciales QR al arranque (Req 11, Req 2)
-  const qrUrlVar = QR_AMBIENTE === 'PRODUCCION' || QR_AMBIENTE === 'PROD' ? 'QR_API_URL_PROD' : 'QR_API_URL_TEST';
-  const qrKeyVar = QR_AMBIENTE === 'PRODUCCION' || QR_AMBIENTE === 'PROD' ? 'QR_API_KEY_PROD' : 'QR_API_KEY_TEST';
-  if (!process.env[qrUrlVar] || !process.env[qrKeyVar]) {
-    console.warn(`⚠️  [QR] Credenciales de ${QR_AMBIENTE} no configuradas. Configura ${qrUrlVar} y ${qrKeyVar} en .env`);
+  // Validación de credenciales QR al arranque (Req 11, Req 2) — API QR Simple v2.0
+  const esProdQr = QR_AMBIENTE === 'PRODUCCION' || QR_AMBIENTE === 'PROD';
+  const qrIdVar = esProdQr ? 'QR_CLIENT_ID_PROD' : 'QR_CLIENT_ID_TEST';
+  const qrSecretVar = esProdQr ? 'QR_CLIENT_SECRET_PROD' : 'QR_CLIENT_SECRET_TEST';
+  if (!process.env[qrIdVar] || !process.env[qrSecretVar]) {
+    console.warn(`⚠️  [QR] Credenciales OAuth de ${QR_AMBIENTE} no configuradas. Configura ${qrIdVar} y ${qrSecretVar} en .env`);
   } else {
-    console.log(`✅ [QR] Credenciales del ambiente ${QR_AMBIENTE} cargadas correctamente`);
+    console.log(`✅ [QR] Credenciales OAuth de ${QR_AMBIENTE} cargadas correctamente`);
   }
 
   console.log("─".repeat(50));
