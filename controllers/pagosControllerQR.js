@@ -339,7 +339,10 @@ export const crearPagoQR = async (req, res) => {
     // Respuesta v2:
     // { numeroReferencia (ATC), numeroReferenciaOriginante (nuestra), estado: "PENDIENTE",
     //   qr: "base64...", monto, moneda, fechaExpiracion }
-    const respuesta = response.data || {};
+    // La v2 envuelve la respuesta en "data": { success, message, data: {...} }
+    const respuesta = (response.data?.data && typeof response.data.data === 'object')
+      ? response.data.data
+      : (response.data || {});
     const atcReferencia = (respuesta.numeroReferencia ?? respuesta.numeroReferenciaOriginante ?? null)?.toString() || null;
     const imagen = normalizarQrBase64(respuesta.qr || respuesta.imagen);
 
@@ -593,7 +596,10 @@ export const verificarEstadoPagoQR = async (req, res) => {
         // Respuesta v2: { numeroReferencia, estado: "PENDIENTE"|"PAGADO"|...,
         //                 mensaje, importe|monto, moneda, clienteOrigen, bancoOrigen }
         // (compatibilidad con v1: codigoRespuesta + transacciones)
-        const respuesta = response.data || {};
+        // La v2 envuelve la respuesta en "data": { success, message, data: {...} }
+        const respuesta = (response.data?.data && typeof response.data.data === 'object')
+          ? response.data.data
+          : (response.data || {});
         const estadoBruto = respuesta.estado || respuesta.codigoRespuesta;
         const detalleBruto = respuesta.mensaje || respuesta.detalleRespuesta || null;
         const nuevoEstado = mapearEstadoPasarela(estadoBruto);
