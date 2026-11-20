@@ -106,6 +106,9 @@ const RETRY_OPTIONS = {
   }
 };
 
+// Control para no repetir en cada polling la evidencia completa de la verificación
+const _verificacionesLogueadas = new Set();
+
 // Log de arranque
 console.log(`🔐 Pasarela QR v2.0 inicializada. Ambiente: ${QR_AMBIENTE} | API: ${QR_API_URL} | Auth: OAuth 2.0`);
 if (!QR_WEBHOOK_URL) {
@@ -346,6 +349,28 @@ export const crearPagoQR = async (req, res) => {
     const atcReferencia = (respuesta.numeroReferencia ?? respuesta.numeroReferenciaOriginante ?? null)?.toString() || null;
     const imagen = normalizarQrBase64(respuesta.qr || respuesta.imagen);
 
+    // Evidencia (mismo formato de la guía de Open Hub): headers enviados y respuesta completa.
+    // Se ocultan credenciales y se recorta el base64 del QR.
+    const headersEvidencia = { ...(response.config?.headers || {}) };
+    for (const clave of ['Authorization', 'authorization']) {
+      if (headersEvidencia[clave]) headersEvidencia[clave] = 'Bearer <token>';
+    }
+    if (headersEvidencia.access_token) headersEvidencia.access_token = '<token>';
+    if (headersEvidencia['x-api-key']) headersEvidencia['x-api-key'] = '<api-key>';
+    console.log(`[QR][${QR_AMBIENTE}] QR v2 → headers: ${JSON.stringify(headersEvidencia)}`);
+
+    const cuerpoRespuesta = (response.data && typeof response.data === 'object')
+      ? response.data
+      : { raw: response.data };
+    const respuestaEvidencia = { ...cuerpoRespuesta };
+    if (cuerpoRespuesta.data && typeof cuerpoRespuesta.data === 'object') {
+      respuestaEvidencia.data = {
+        ...cuerpoRespuesta.data,
+        qr: imagen ? `<BASE64 ${Math.round(imagen.length / 1024)}KB>` : '<AUSENTE>'
+      };
+    }
+    console.log(`[QR][${QR_AMBIENTE}] QR v2 ← respuesta completa: ${JSON.stringify(respuestaEvidencia)}`);
+
     if (!imagen) {
       console.error('[QR] Redenlace no devolvió imagen Base64:', respuesta);
       return res.status(502).json({
@@ -465,6 +490,8 @@ export const webhookQR = async (req, res) => {
       `[QR][${QR_AMBIENTE}] Callback recibido. Ref: ${numeroReferencia} | Originante: ${numeroReferenciaOriginante || '-'} | ` +
       `Estado: ${codigo}${detalleRespuesta || mensaje ? ` (${detalleRespuesta || mensaje})` : ''}`
     );
+    // Evidencia: payload completo que envía la pasarela
+    console.log(`[QR][${QR_AMBIENTE}] Webhook ← body: ${JSON.stringify(req.body)}`);
 
     // Buscar el pago por cualquiera de las dos referencias (ATC u originante/nuestra)
     const candidatas = [numeroReferencia, numeroReferenciaOriginante]
@@ -513,11 +540,13 @@ export const webhookQR = async (req, res) => {
     }
 
     // Respuesta obligatoria para Redenlace (se responde con NUESTRA referencia originante si vino)
-    return res.status(200).json({
+    const respuestaWebhook = {
       numeroReferencia: (numeroReferenciaOriginante || numeroReferencia).toString(),
       codigoRespuesta: '00',
       detalleRespuesta: null
-    });
+    };
+    console.log(`[QR][${QR_AMBIENTE}] Webhook → respuesta HTTP 200: ${JSON.stringify(respuestaWebhook)}`);
+    return res.status(200).json(respuestaWebhook);
 
   } catch (error) {
     console.error('[QR] Error interno en webhook:', error.message);
@@ -603,13 +632,21 @@ export const verificarEstadoPagoQR = async (req, res) => {
         const estadoBruto = respuesta.estado || respuesta.codigoRespuesta;
         const detalleBruto = respuesta.mensaje || respuesta.detalleRespuesta || null;
         const nuevoEstado = mapearEstadoPasarela(estadoBruto);
+        const cambioEstado = nuevoEstado !== pago.estado;
 
-        // Solo loguear cuando el estado cambia (evitar spam en consola)
-        if (nuevoEstado !== pago.estado) {
-          console.log(`[QR][${QR_AMBIENTE}] Estado actualizado. Ref: ${refParaConsulta} | ${pago.estado} → ${nuevoEstado} (pasarela: ${estadoBruto})`);
+        // Evidencia: se imprime la respuesta completa la primera vez por pago y cada
+        // vez que cambia el estado (el frontend hace polling, no conviene en cada consulta).
+        const claveEvidencia = String(pago.id);
+        if (cambioEstado || !_verificacionesLogueadas.has(claveEvidencia)) {
+          console.log(`[QR][${QR_AMBIENTE}] QR v2 → GET ${QR_API_URL}${QR_PATH_VERIFICAR}/${refParaConsulta}`);
+          console.log(`[QR][${QR_AMBIENTE}] QR v2 ← verificación completa: ${JSON.stringify(response.data)}`);
+          _verificacionesLogueadas.add(claveEvidencia);
+          if (_verificacionesLogueadas.size > 1000) _verificacionesLogueadas.clear();
         }
 
-        if (nuevoEstado !== pago.estado) {
+        if (cambioEstado) {
+          console.log(`[QR][${QR_AMBIENTE}] Estado actualizado. Ref: ${refParaConsulta} | ${pago.estado} → ${nuevoEstado} (pasarela: ${estadoBruto})`);
+
           await pool.execute(
             `UPDATE pagos SET estado = ?, updated_at = NOW() WHERE id = ?`,
             [nuevoEstado, pago.id]
